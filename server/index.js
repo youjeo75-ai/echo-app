@@ -12,16 +12,18 @@ const DB_FILE = path.join(__dirname, 'db.json');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 
 // ============================================
-// CONFIGURATION & MIDDLEWARE
+// CREATE UPLOADS DIRECTORY
 // ============================================
 
-// Create uploads directory if it doesn't exist
 if (!fs.existsSync(UPLOAD_DIR)) {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
     console.log('📁 Uploads directory created');
 }
 
-// Configure multer for file uploads
+// ============================================
+// CONFIGURE MULTER FOR FILE UPLOADS
+// ============================================
+
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
         try {
@@ -45,25 +47,32 @@ const upload = multer({
         files: 5 // Max 5 files per post
     },
     fileFilter: (req, file, cb) => {
-        const allowedTypes = /jpeg|jpg|png|gif|webp|mp4|webm|mov|pdf|doc|docx|txt/;
+        const allowedTypes = /jpeg|jpg|png|gif|webp|mp4|webm|pdf|doc|docx|txt/;
         const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
         const mimetype = allowedTypes.test(file.mimetype);
         
         if (extname && mimetype) {
             cb(null, true);
         } else {
-            cb(new Error('Only images, videos, PDFs, and documents are allowed'));
+            cb(new Error('Only images, videos, PDFs, and documents allowed'));
         }
     }
 });
 
-// CORS configuration
+// ============================================
+// CORS & MIDDLEWARE
+// ============================================
+
 app.use(cors({
     origin: [
         'http://localhost:5173',
         'http://localhost:3001',
         'http://localhost:5174',
-        process.env.CLIENT_URL || '*'
+        process.env.CLIENT_URL || '*',
+        /.vercel.app$/,
+        /.onrender.com$/,
+        /.replit.dev$/,
+        /.repl.co$/
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -161,7 +170,7 @@ const extractHashtags = (content) => {
 };
 
 // ============================================
-// API ROUTES
+// API ROUTES - POSTS
 // ============================================
 
 // GET all posts
@@ -261,35 +270,10 @@ app.get('/api/trending', async (req, res) => {
     }
 });
 
-// POST upload files (DIRECT UPLOAD - No URLs!)
-app.post('/api/upload', upload.array('files', 5), async (req, res) => {
-    try {
-        if (!req.files || req.files.length === 0) {
-            return res.status(400).json({ error: 'No files uploaded' });
-        }
-        
-        const files = req.files.map(file => ({
-            fileUrl: `${req.protocol}://${req.get('host')}/uploads/${file.filename}`,
-            fileName: file.originalname,
-            fileType: file.mimetype.startsWith('image/') ? 'image' : 
-                     file.mimetype.startsWith('video/') ? 'video' : 'file',
-            fileSize: file.size
-        }));
-        
-        res.json({
-            success: true,
-            files: files
-        });
-    } catch (error) {
-        console.error('❌ Upload error:', error);
-        res.status(500).json({ error: 'Failed to upload files' });
-    }
-});
-
 // POST create post
 app.post('/api/posts', async (req, res) => {
     try {
-        const { content, tags, media } = req.body;
+        const { content, tags, imageUrl, fileUrl, fileName, fileType, media } = req.body;
         
         // Validation
         if (!content || content.trim().length === 0) {
@@ -307,7 +291,11 @@ app.post('/api/posts', async (req, res) => {
             id: uuidv4(),
             content: content.trim(),
             tags: tags || [],
-            media: media || [], // Array of uploaded files
+            imageUrl: imageUrl || null,
+            fileUrl: fileUrl || null,
+            fileName: fileName || null,
+            fileType: fileType || null,
+            media: media || [],
             ownerId: ownerId,
             timestamp: new Date().toISOString(),
             color: Math.floor(Math.random() * 5),
@@ -383,6 +371,7 @@ app.post('/api/posts/:id/vote', async (req, res) => {
         const downvotes = postVotes.filter(v => v.type === 'down').length;
         const netVotes = upvotes - downvotes;
         
+        // Check for milestones
         if (netVotes === 10) milestone = '🔥 Hot Post!';
         if (netVotes === 50) milestone = '⚡ Viral!';
         if (netVotes === 100) milestone = '🚀 Legendary!';
@@ -471,6 +460,31 @@ app.get('/api/stats', async (req, res) => {
     } catch (error) {
         console.error('❌ Stats error:', error);
         res.status(500).json({ error: 'Failed to load stats' });
+    }
+});
+
+// POST upload file
+app.post('/api/upload', upload.array('files', 5), async (req, res) => {
+    try {
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ error: 'No files uploaded' });
+        }
+        
+        const files = req.files.map(file => ({
+            fileUrl: `${req.protocol}://${req.get('host')}/uploads/${file.filename}`,
+            fileName: file.originalname,
+            fileType: file.mimetype.startsWith('image/') ? 'image' : 
+                     file.mimetype.startsWith('video/') ? 'video' : 'file',
+            fileSize: file.size
+        }));
+        
+        res.json({
+            success: true,
+            files: files
+        });
+    } catch (error) {
+        console.error('❌ Upload error:', error);
+        res.status(500).json({ error: 'Failed to upload files' });
     }
 });
 

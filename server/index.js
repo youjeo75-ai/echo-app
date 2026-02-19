@@ -10,18 +10,21 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const DB_FILE = path.join(__dirname, 'db.json');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const BANNED_FILE = path.join(__dirname, 'banned.json');
+
+// Admin password from env or default (CHANGE IN PRODUCTION!)
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
 // ============================================
-// CREATE UPLOADS DIRECTORY
+// CREATE DIRECTORIES
 // ============================================
 
 if (!fs.existsSync(UPLOAD_DIR)) {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-    console.log('📁 Uploads directory created');
 }
 
 // ============================================
-// CONFIGURE MULTER FOR FILE UPLOADS
+// CONFIGURE MULTER FOR DIRECT FILE UPLOAD
 // ============================================
 
 const storage = multer.diskStorage({
@@ -43,11 +46,11 @@ const storage = multer.diskStorage({
 const upload = multer({
     storage: storage,
     limits: { 
-        fileSize: 50 * 1024 * 1024, // 50MB limit
+        fileSize: 50 * 1024 * 1024, // 50MB per file
         files: 5 // Max 5 files per post
     },
     fileFilter: (req, file, cb) => {
-        const allowedTypes = /jpeg|jpg|png|gif|webp|mp4|webm|pdf|doc|docx|txt/;
+        const allowedTypes = /jpeg|jpg|png|gif|webp|mp4|webm|mov|pdf|doc|docx|txt/;
         const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
         const mimetype = allowedTypes.test(file.mimetype);
         
@@ -67,7 +70,6 @@ app.use(cors({
     origin: [
         'http://localhost:5173',
         'http://localhost:3001',
-        'http://localhost:5174',
         process.env.CLIENT_URL || '*',
         /.vercel.app$/,
         /.onrender.com$/,
@@ -84,7 +86,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
 // ============================================
-// DATABASE FUNCTIONS (FIXED - No More Undefined Errors!)
+// DATABASE & BANNED USERS FUNCTIONS
 // ============================================
 
 const initializeDB = async () => {
@@ -97,64 +99,54 @@ const initializeDB = async () => {
         reports: []
     };
     await fsPromises.writeFile(DB_FILE, JSON.stringify(data, null, 2));
-    console.log('✅ Database initialized with correct structure');
     return data;
 };
 
 const readDB = async () => {
     try {
-        const exists = await fsPromises.access(DB_FILE)
-            .then(() => true)
-            .catch(() => false);
-        
-        if (!exists) {
-            console.log('📁 Database file not found, creating new one...');
-            return await initializeDB();
-        }
+        const exists = await fsPromises.access(DB_FILE).then(() => true).catch(() => false);
+        if (!exists) return await initializeDB();
         
         const data = await fsPromises.readFile(DB_FILE, 'utf8');
         const parsed = JSON.parse(data);
         
-        // CRITICAL FIX: Ensure ALL arrays exist (fixes undefined errors)
-        if (!parsed.posts || !Array.isArray(parsed.posts)) {
-            console.log('⚠️ Fixing posts array');
-            parsed.posts = [];
-        }
-        if (!parsed.comments || !Array.isArray(parsed.comments)) {
-            console.log('⚠️ Fixing comments array');
-            parsed.comments = [];
-        }
-        if (!parsed.votes || !Array.isArray(parsed.votes)) {
-            console.log('⚠️ Fixing votes array');
-            parsed.votes = [];
-        }
-        if (!parsed.bookmarks || !Array.isArray(parsed.bookmarks)) {
-            console.log('⚠️ Fixing bookmarks array');
-            parsed.bookmarks = [];
-        }
-        if (!parsed.users || !Array.isArray(parsed.users)) {
-            console.log('⚠️ Fixing users array');
-            parsed.users = [];
-        }
-        if (!parsed.reports || !Array.isArray(parsed.reports)) {
-            console.log('⚠️ Fixing reports array');
-            parsed.reports = [];
-        }
+        // Ensure ALL arrays exist
+        if (!parsed.posts || !Array.isArray(parsed.posts)) parsed.posts = [];
+        if (!parsed.comments || !Array.isArray(parsed.comments)) parsed.comments = [];
+        if (!parsed.votes || !Array.isArray(parsed.votes)) parsed.votes = [];
+        if (!parsed.bookmarks || !Array.isArray(parsed.bookmarks)) parsed.bookmarks = [];
+        if (!parsed.users || !Array.isArray(parsed.users)) parsed.users = [];
+        if (!parsed.reports || !Array.isArray(parsed.reports)) parsed.reports = [];
         
         return parsed;
     } catch (error) {
-        console.error('❌ Database read error:', error.message);
-        console.log('🔄 Reinitializing database...');
+        console.error('DB Error:', error.message);
         return await initializeDB();
     }
 };
 
 const writeDB = async (data) => {
+    await fsPromises.writeFile(DB_FILE, JSON.stringify(data, null, 2));
+};
+
+// Banned users functions
+const loadBanned = async () => {
     try {
-        await fsPromises.writeFile(DB_FILE, JSON.stringify(data, null, 2));
+        const exists = await fsPromises.access(BANNED_FILE).then(() => true).catch(() => false);
+        if (!exists) {
+            await fsPromises.writeFile(BANNED_FILE, JSON.stringify({ banned: [] }, null, 2));
+            return [];
+        }
+        const data = await fsPromises.readFile(BANNED_FILE, 'utf8');
+        const parsed = JSON.parse(data);
+        return parsed.banned || [];
     } catch (error) {
-        console.error('❌ Database write error:', error.message);
+        return [];
     }
+};
+
+const saveBanned = async (banned) => {
+    await fsPromises.writeFile(BANNED_FILE, JSON.stringify({ banned }, null, 2));
 };
 
 const getVoterId = (req) => {
@@ -169,8 +161,27 @@ const extractHashtags = (content) => {
     return [...new Set(matches.map(tag => tag.toLowerCase()))];
 };
 
+// Admin check middleware
+const requireAdmin = (req, res, next) => {
+    const auth = req.headers.authorization;
+    if (!auth || auth.replace('Bearer ', '') !== ADMIN_PASSWORD) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+};
+
+// Check if user is banned
+const checkBan = async (req, res, next) => {
+    const voterId = getVoterId(req);
+    const banned = await loadBanned();
+    if (banned.includes(voterId)) {
+        return res.status(403).json({ error: 'Your account has been banned' });
+    }
+    next();
+};
+
 // ============================================
-// API ROUTES - POSTS
+// PUBLIC API ROUTES
 // ============================================
 
 // GET all posts
@@ -179,9 +190,7 @@ app.get('/api/posts', async (req, res) => {
         const db = await readDB();
         const voterId = getVoterId(req);
         
-        if (!db.posts || !Array.isArray(db.posts)) {
-            return res.json([]);
-        }
+        if (!db.posts || !Array.isArray(db.posts)) return res.json([]);
         
         const posts = db.posts.map(post => {
             const userVote = db.votes.find(v => v.postId === post.id && v.voterId === voterId);
@@ -206,8 +215,7 @@ app.get('/api/posts', async (req, res) => {
         posts.sort((a, b) => b.netVotes - a.netVotes);
         res.json(posts);
     } catch (error) {
-        console.error('❌ Get posts error:', error);
-        res.status(500).json({ error: 'Failed to load posts', details: error.message });
+        res.status(500).json({ error: 'Failed to load posts' });
     }
 });
 
@@ -217,13 +225,10 @@ app.get('/api/trending/hashtags', async (req, res) => {
         const db = await readDB();
         const hashtagCount = {};
         
-        if (!db.posts || !Array.isArray(db.posts)) {
-            return res.json([]);
-        }
+        if (!db.posts || !Array.isArray(db.posts)) return res.json([]);
         
         db.posts.forEach(post => {
-            const hashtags = extractHashtags(post.content);
-            hashtags.forEach(tag => {
+            extractHashtags(post.content).forEach(tag => {
                 hashtagCount[tag] = (hashtagCount[tag] || 0) + 1;
             });
         });
@@ -235,7 +240,6 @@ app.get('/api/trending/hashtags', async (req, res) => {
         
         res.json(trending);
     } catch (error) {
-        console.error('❌ Get trending hashtags error:', error);
         res.status(500).json({ error: 'Failed to load hashtags' });
     }
 });
@@ -247,9 +251,7 @@ app.get('/api/trending', async (req, res) => {
         const now = new Date();
         const yesterday = new Date(now - 24 * 60 * 60 * 1000);
         
-        if (!db.posts || !Array.isArray(db.posts)) {
-            return res.json([]);
-        }
+        if (!db.posts || !Array.isArray(db.posts)) return res.json([]);
         
         const trending = db.posts
             .filter(p => new Date(p.timestamp) > yesterday)
@@ -265,164 +267,7 @@ app.get('/api/trending', async (req, res) => {
         
         res.json(trending);
     } catch (error) {
-        console.error('❌ Get trending error:', error);
         res.status(500).json({ error: 'Failed to load trending' });
-    }
-});
-
-// POST create post
-app.post('/api/posts', async (req, res) => {
-    try {
-        const { content, tags, imageUrl, fileUrl, fileName, fileType, media } = req.body;
-        
-        // Validation
-        if (!content || content.trim().length === 0) {
-            return res.status(400).json({ error: 'Content is required' });
-        }
-        
-        if (content.length > 1000) {
-            return res.status(400).json({ error: 'Content must be under 1000 characters' });
-        }
-        
-        const db = await readDB();
-        const ownerId = getVoterId(req);
-        
-        const newPost = {
-            id: uuidv4(),
-            content: content.trim(),
-            tags: tags || [],
-            imageUrl: imageUrl || null,
-            fileUrl: fileUrl || null,
-            fileName: fileName || null,
-            fileType: fileType || null,
-            media: media || [],
-            ownerId: ownerId,
-            timestamp: new Date().toISOString(),
-            color: Math.floor(Math.random() * 5),
-            views: 0,
-            edited: false
-        };
-        
-        if (!db.posts || !Array.isArray(db.posts)) {
-            db.posts = [];
-        }
-        
-        db.posts.unshift(newPost);
-        await writeDB(db);
-        
-        console.log('✅ Post created:', newPost.id);
-        res.status(201).json(newPost);
-    } catch (error) {
-        console.error('❌ Create post error:', error);
-        res.status(500).json({ error: 'Failed to create post', details: error.message });
-    }
-});
-
-// POST vote
-app.post('/api/posts/:id/vote', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { type } = req.body;
-        
-        if (!['up', 'down'].includes(type)) {
-            return res.status(400).json({ error: 'Invalid vote type' });
-        }
-        
-        const db = await readDB();
-        const voterId = getVoterId(req);
-        
-        if (!db.posts || !Array.isArray(db.posts)) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-        
-        const postIndex = db.posts.findIndex(p => p.id === id);
-        if (postIndex === -1) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-        
-        if (!db.votes || !Array.isArray(db.votes)) {
-            db.votes = [];
-        }
-        
-        const existingVoteIndex = db.votes.findIndex(
-            v => v.postId === id && v.voterId === voterId
-        );
-        
-        let milestone = null;
-        
-        if (existingVoteIndex !== -1) {
-            const existingVote = db.votes[existingVoteIndex];
-            if (existingVote.type === type) {
-                db.votes.splice(existingVoteIndex, 1);
-            } else {
-                db.votes[existingVoteIndex].type = type;
-            }
-        } else {
-            db.votes.push({
-                postId: id,
-                voterId,
-                type,
-                timestamp: new Date().toISOString()
-            });
-        }
-        
-        const postVotes = db.votes.filter(v => v.postId === id);
-        const upvotes = postVotes.filter(v => v.type === 'up').length;
-        const downvotes = postVotes.filter(v => v.type === 'down').length;
-        const netVotes = upvotes - downvotes;
-        
-        // Check for milestones
-        if (netVotes === 10) milestone = '🔥 Hot Post!';
-        if (netVotes === 50) milestone = '⚡ Viral!';
-        if (netVotes === 100) milestone = '🚀 Legendary!';
-        
-        await writeDB(db);
-        
-        res.json({
-            success: true,
-            upvotes,
-            downvotes,
-            netVotes,
-            milestone,
-            userVote: db.votes.find(v => v.postId === id && v.voterId === voterId)?.type || null
-        });
-    } catch (error) {
-        console.error('❌ Vote error:', error);
-        res.status(500).json({ error: 'Failed to vote', details: error.message });
-    }
-});
-
-// POST bookmark
-app.post('/api/posts/:id/bookmark', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const db = await readDB();
-        const userId = getVoterId(req);
-        
-        if (!db.bookmarks || !Array.isArray(db.bookmarks)) {
-            db.bookmarks = [];
-        }
-        
-        const existingBookmark = db.bookmarks.find(
-            b => b.postId === id && b.userId === userId
-        );
-        
-        if (existingBookmark) {
-            db.bookmarks = db.bookmarks.filter(b => b !== existingBookmark);
-            await writeDB(db);
-            return res.json({ success: true, bookmarked: false });
-        } else {
-            db.bookmarks.push({
-                postId: id,
-                userId,
-                timestamp: new Date().toISOString()
-            });
-            await writeDB(db);
-            return res.json({ success: true, bookmarked: true });
-        }
-    } catch (error) {
-        console.error('❌ Bookmark error:', error);
-        res.status(500).json({ error: 'Failed to toggle bookmark' });
     }
 });
 
@@ -458,12 +303,11 @@ app.get('/api/stats', async (req, res) => {
             karma: totalUpvotes - totalDownvotes
         });
     } catch (error) {
-        console.error('❌ Stats error:', error);
         res.status(500).json({ error: 'Failed to load stats' });
     }
 });
 
-// POST upload file
+// POST upload files (DIRECT UPLOAD - Opens gallery/file picker)
 app.post('/api/upload', upload.array('files', 5), async (req, res) => {
     try {
         if (!req.files || req.files.length === 0) {
@@ -478,44 +322,145 @@ app.post('/api/upload', upload.array('files', 5), async (req, res) => {
             fileSize: file.size
         }));
         
-        res.json({
-            success: true,
-            files: files
-        });
+        res.json({ success: true, files });
     } catch (error) {
-        console.error('❌ Upload error:', error);
         res.status(500).json({ error: 'Failed to upload files' });
     }
 });
 
+// POST create post (with direct file upload support)
+app.post('/api/posts', checkBan, async (req, res) => {
+    try {
+        const { content, tags, media } = req.body;
+        
+        if (!content || content.trim().length === 0) {
+            return res.status(400).json({ error: 'Content is required' });
+        }
+        if (content.length > 1000) {
+            return res.status(400).json({ error: 'Content must be under 1000 characters' });
+        }
+        
+        const db = await readDB();
+        const ownerId = getVoterId(req);
+        
+        const newPost = {
+            id: uuidv4(),
+            content: content.trim(),
+            tags: tags || [],
+            media: media || [], // Array of uploaded files from /api/upload
+            ownerId,
+            timestamp: new Date().toISOString(),
+            color: Math.floor(Math.random() * 5)
+        };
+        
+        if (!db.posts || !Array.isArray(db.posts)) db.posts = [];
+        db.posts.unshift(newPost);
+        await writeDB(db);
+        
+        res.status(201).json(newPost);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to create post' });
+    }
+});
+
+// POST vote
+app.post('/api/posts/:id/vote', checkBan, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { type } = req.body;
+        
+        if (!['up', 'down'].includes(type)) {
+            return res.status(400).json({ error: 'Invalid vote type' });
+        }
+        
+        const db = await readDB();
+        const voterId = getVoterId(req);
+        
+        if (!db.posts || !Array.isArray(db.posts)) return res.status(404).json({ error: 'Post not found' });
+        
+        const postIndex = db.posts.findIndex(p => p.id === id);
+        if (postIndex === -1) return res.status(404).json({ error: 'Post not found' });
+        
+        if (!db.votes || !Array.isArray(db.votes)) db.votes = [];
+        
+        const existingVoteIndex = db.votes.findIndex(v => v.postId === id && v.voterId === voterId);
+        let milestone = null;
+        
+        if (existingVoteIndex !== -1) {
+            if (db.votes[existingVoteIndex].type === type) {
+                db.votes.splice(existingVoteIndex, 1); // Toggle off
+            } else {
+                db.votes[existingVoteIndex].type = type; // Change vote
+            }
+        } else {
+            db.votes.push({ postId: id, voterId, type, timestamp: new Date().toISOString() });
+        }
+        
+        const postVotes = db.votes.filter(v => v.postId === id);
+        const upvotes = postVotes.filter(v => v.type === 'up').length;
+        const downvotes = postVotes.filter(v => v.type === 'down').length;
+        const netVotes = upvotes - downvotes;
+        
+        if (netVotes === 10) milestone = '🔥 Hot Post!';
+        if (netVotes === 50) milestone = '⚡ Viral!';
+        if (netVotes === 100) milestone = '🚀 Legendary!';
+        
+        await writeDB(db);
+        
+        res.json({
+            success: true,
+            upvotes,
+            downvotes,
+            netVotes,
+            milestone,
+            userVote: db.votes.find(v => v.postId === id && v.voterId === voterId)?.type || null
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to vote' });
+    }
+});
+
+// POST bookmark
+app.post('/api/posts/:id/bookmark', checkBan, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const db = await readDB();
+        const userId = getVoterId(req);
+        
+        if (!db.bookmarks || !Array.isArray(db.bookmarks)) db.bookmarks = [];
+        
+        const existingBookmark = db.bookmarks.find(b => b.postId === id && b.userId === userId);
+        
+        if (existingBookmark) {
+            db.bookmarks = db.bookmarks.filter(b => b !== existingBookmark);
+            await writeDB(db);
+            return res.json({ success: true, bookmarked: false });
+        } else {
+            db.bookmarks.push({ postId: id, userId, timestamp: new Date().toISOString() });
+            await writeDB(db);
+            return res.json({ success: true, bookmarked: true });
+        }
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to toggle bookmark' });
+    }
+});
+
 // POST comment
-app.post('/api/posts/:id/comments', async (req, res) => {
+app.post('/api/posts/:id/comments', checkBan, async (req, res) => {
     try {
         const { id } = req.params;
         const { content } = req.body;
         
-        if (!content || content.trim().length === 0) {
-            return res.status(400).json({ error: 'Comment required' });
-        }
-        
-        if (content.length > 500) {
-            return res.status(400).json({ error: 'Comment too long' });
-        }
+        if (!content || content.trim().length === 0) return res.status(400).json({ error: 'Comment required' });
+        if (content.length > 500) return res.status(400).json({ error: 'Comment too long' });
         
         const db = await readDB();
         
-        if (!db.posts || !Array.isArray(db.posts)) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-        
+        if (!db.posts || !Array.isArray(db.posts)) return res.status(404).json({ error: 'Post not found' });
         const post = db.posts.find(p => p.id === id);
-        if (!post) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
+        if (!post) return res.status(404).json({ error: 'Post not found' });
         
-        if (!db.comments || !Array.isArray(db.comments)) {
-            db.comments = [];
-        }
+        if (!db.comments || !Array.isArray(db.comments)) db.comments = [];
         
         const newComment = {
             id: uuidv4(),
@@ -526,70 +471,214 @@ app.post('/api/posts/:id/comments', async (req, res) => {
         
         db.comments.push(newComment);
         await writeDB(db);
-        
         res.status(201).json(newComment);
     } catch (error) {
-        console.error('❌ Add comment error:', error);
         res.status(500).json({ error: 'Failed to add comment' });
     }
 });
 
-// DELETE post
-app.delete('/api/posts/:id', async (req, res) => {
+// POST report post
+app.post('/api/posts/:id/report', checkBan, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+        const db = await readDB();
+        
+        if (!db.posts || !Array.isArray(db.posts)) return res.status(404).json({ error: 'Post not found' });
+        const post = db.posts.find(p => p.id === id);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+        
+        if (!db.reports || !Array.isArray(db.reports)) db.reports = [];
+        
+        db.reports.push({
+            id: uuidv4(),
+            postId: id,
+            reason: reason || 'No reason provided',
+            reportedBy: getVoterId(req),
+            timestamp: new Date().toISOString()
+        });
+        
+        await writeDB(db);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to submit report' });
+    }
+});
+
+// DELETE own post
+app.delete('/api/posts/:id', checkBan, async (req, res) => {
     try {
         const { id } = req.params;
         const db = await readDB();
         const voterId = getVoterId(req);
         
-        if (!db.posts || !Array.isArray(db.posts)) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-        
+        if (!db.posts || !Array.isArray(db.posts)) return res.status(404).json({ error: 'Post not found' });
         const post = db.posts.find(p => p.id === id);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+        if (post.ownerId !== voterId) return res.status(403).json({ error: 'You can only delete your own posts' });
         
-        if (!post) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-        
-        if (post.ownerId !== voterId) {
-            return res.status(403).json({ error: 'You can only delete your own posts' });
-        }
-        
-        // Delete uploaded files if they exist
+        // Delete uploaded files
         if (post.media && Array.isArray(post.media)) {
             for (const file of post.media) {
                 if (file.fileUrl) {
-                    const filePath = path.join(UPLOAD_DIR, path.basename(file.fileUrl));
                     try {
-                        await fsPromises.unlink(filePath);
-                    } catch (e) {
-                        console.log('File already deleted or not found');
-                    }
+                        await fsPromises.unlink(path.join(UPLOAD_DIR, path.basename(file.fileUrl)));
+                    } catch (e) {}
                 }
             }
         }
         
         db.posts = db.posts.filter(p => p.id !== id);
-        
-        if (db.comments && Array.isArray(db.comments)) {
-            db.comments = db.comments.filter(c => c.postId !== id);
-        }
-        
-        if (db.votes && Array.isArray(db.votes)) {
-            db.votes = db.votes.filter(v => v.postId !== id);
-        }
-        
-        if (db.bookmarks && Array.isArray(db.bookmarks)) {
-            db.bookmarks = db.bookmarks.filter(b => b.postId !== id);
-        }
+        if (db.comments && Array.isArray(db.comments)) db.comments = db.comments.filter(c => c.postId !== id);
+        if (db.votes && Array.isArray(db.votes)) db.votes = db.votes.filter(v => v.postId !== id);
+        if (db.bookmarks && Array.isArray(db.bookmarks)) db.bookmarks = db.bookmarks.filter(b => b.postId !== id);
         
         await writeDB(db);
-        
-        console.log('✅ Post deleted:', id);
         res.json({ success: true });
     } catch (error) {
-        console.error('❌ Delete error:', error);
-        res.status(500).json({ error: 'Failed to delete', details: error.message });
+        res.status(500).json({ error: 'Failed to delete' });
+    }
+});
+
+// ============================================
+// ADMIN API ROUTES
+// ============================================
+
+// Admin login
+app.post('/api/admin/login', (req, res) => {
+    const { password } = req.body;
+    if (password === ADMIN_PASSWORD) {
+        res.json({ success: true, token: ADMIN_PASSWORD });
+    } else {
+        res.status(401).json({ error: 'Invalid admin password' });
+    }
+});
+
+// GET all posts (admin view)
+app.get('/api/admin/posts', requireAdmin, async (req, res) => {
+    try {
+        const db = await readDB();
+        const banned = await loadBanned();
+        
+        if (!db.posts || !Array.isArray(db.posts)) return res.json([]);
+        
+        const posts = db.posts.map(post => ({
+            ...post,
+            commentCount: db.comments?.filter(c => c.postId === post.id).length || 0,
+            voteCount: db.votes?.filter(v => v.postId === post.id).length || 0,
+            isBanned: banned.includes(post.ownerId)
+        }));
+        
+        res.json(posts);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load admin posts' });
+    }
+});
+
+// GET banned users
+app.get('/api/admin/banned', requireAdmin, async (req, res) => {
+    try {
+        const banned = await loadBanned();
+        res.json({ banned });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load banned users' });
+    }
+});
+
+// GET reports
+app.get('/api/admin/reports', requireAdmin, async (req, res) => {
+    try {
+        const db = await readDB();
+        res.json(db.reports || []);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load reports' });
+    }
+});
+
+// BAN user
+app.post('/api/admin/ban', requireAdmin, async (req, res) => {
+    try {
+        const { voterId, reason, deletePosts } = req.body;
+        if (!voterId) return res.status(400).json({ error: 'voterId is required' });
+        
+        let banned = await loadBanned();
+        if (!banned.includes(voterId)) {
+            banned.push(voterId);
+            await saveBanned(banned);
+        }
+        
+        // Optionally delete all posts by banned user
+        if (deletePosts) {
+            const db = await readDB();
+            db.posts = db.posts.filter(p => p.ownerId !== voterId);
+            if (db.comments && Array.isArray(db.comments)) {
+                db.comments = db.comments.filter(c => {
+                    const post = db.posts.find(p => p.id === c.postId);
+                    return !post || post.ownerId !== voterId;
+                });
+            }
+            if (db.votes && Array.isArray(db.votes)) {
+                db.votes = db.votes.filter(v => {
+                    const post = db.posts.find(p => p.id === v.postId);
+                    return !post || post.ownerId !== voterId;
+                });
+            }
+            await writeDB(db);
+        }
+        
+        res.json({ success: true, message: `User banned` });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to ban user' });
+    }
+});
+
+// UNBAN user
+app.post('/api/admin/unban', requireAdmin, async (req, res) => {
+    try {
+        const { voterId } = req.body;
+        if (!voterId) return res.status(400).json({ error: 'voterId is required' });
+        
+        let banned = await loadBanned();
+        banned = banned.filter(id => id !== voterId);
+        await saveBanned(banned);
+        
+        res.json({ success: true, message: 'User unbanned' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to unban user' });
+    }
+});
+
+// DELETE any post (admin)
+app.delete('/api/admin/posts/:id', requireAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const db = await readDB();
+        
+        if (!db.posts || !Array.isArray(db.posts)) return res.status(404).json({ error: 'Post not found' });
+        const postIndex = db.posts.findIndex(p => p.id === id);
+        if (postIndex === -1) return res.status(404).json({ error: 'Post not found' });
+        
+        // Delete uploaded files
+        const post = db.posts[postIndex];
+        if (post.media && Array.isArray(post.media)) {
+            for (const file of post.media) {
+                if (file.fileUrl) {
+                    try {
+                        await fsPromises.unlink(path.join(UPLOAD_DIR, path.basename(file.fileUrl)));
+                    } catch (e) {}
+                }
+            }
+        }
+        
+        db.posts.splice(postIndex, 1);
+        if (db.comments && Array.isArray(db.comments)) db.comments = db.comments.filter(c => c.postId !== id);
+        if (db.votes && Array.isArray(db.votes)) db.votes = db.votes.filter(v => v.postId !== id);
+        if (db.bookmarks && Array.isArray(db.bookmarks)) db.bookmarks = db.bookmarks.filter(b => b.postId !== id);
+        
+        await writeDB(db);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to delete post' });
     }
 });
 
@@ -615,7 +704,8 @@ app.listen(PORT, () => {
     console.log(`🚀 Echo Server running on http://localhost:${PORT}`);
     console.log(`📁 Database: ${DB_FILE}`);
     console.log(`📁 Uploads: ${UPLOAD_DIR}`);
-    console.log('✨ Features: Direct File Upload, Voting, Bookmarks, Images, Videos, Files, Delete, Share, Download');
+    console.log(`🔐 Admin password: ${ADMIN_PASSWORD} (CHANGE IN PRODUCTION!)`);
+    console.log('✨ Features: Direct File Upload, Voting, Bookmarks, Images, Videos, Admin Panel, Ban System');
     console.log('🚀 ============================================');
 });
 

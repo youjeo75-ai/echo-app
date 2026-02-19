@@ -7,24 +7,20 @@ import {
   Send, Ghost, TrendingUp, Search, X, Image as ImageIcon,
   ArrowUp, ArrowDown, MessageCircle, Share2, Bookmark,
   Moon, Sun, Zap, BarChart3, Hash, Download,
-  Trash2, FileText, Link, ExternalLink, Video, File, Plus
+  Trash2, FileText, Link, ExternalLink
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-interface MediaFile {
-  fileUrl: string;
-  fileName: string;
-  fileType: 'image' | 'video' | 'file';
-  fileSize: number;
-}
-
 interface Post {
   id: string;
   content: string;
   tags: string[];
-  media?: MediaFile[];
+  imageUrl?: string | null;
+  fileUrl?: string | null;
+  fileName?: string | null;
+  fileType?: string | null;
   upvotes: number;
   downvotes: number;
   netVotes: number;
@@ -42,7 +38,8 @@ interface Post {
 function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [newPost, setNewPost] = useState('');
-  const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
+  const [imageUrl, setImageUrl] = useState('');
+  const [fileUrl, setFileUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [darkMode, setDarkMode] = useState(true);
@@ -50,8 +47,8 @@ function App() {
   const [trendingHashtags, setTrendingHashtags] = useState<any[]>([]);
   const [userStats, setUserStats] = useState<any>(null);
   const [activeFilter, setActiveFilter] = useState<'all' | 'bookmarked'>('all');
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showImageInput, setShowImageInput] = useState(false);
+  const [showFileInput, setShowFileInput] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -80,41 +77,8 @@ function App() {
       setUserStats(statsRes.data);
       setLoading(false);
     } catch (error) {
-      toast.error('Connection lost - check if server is running');
+      toast.error('Connection lost');
     }
-  };
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      for (let i = 0; i < files.length; i++) {
-        formData.append('files', files[i]);
-      }
-
-      const response = await axios.post(`${API_URL}/api/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
-
-      setMediaFiles(prev => [...prev, ...response.data.files]);
-      toast.success(`${files.length} file(s) uploaded!`);
-    } catch (error) {
-      toast.error('Failed to upload files');
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }
-  };
-
-  const removeMedia = (index: number) => {
-    setMediaFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -124,14 +88,18 @@ function App() {
       await axios.post(`${API_URL}/api/posts`, {
         content: newPost,
         tags: [],
-        media: mediaFiles
+        imageUrl: imageUrl.trim() || null,
+        fileUrl: fileUrl.trim() || null
       });
       setNewPost('');
-      setMediaFiles([]);
+      setImageUrl('');
+      setFileUrl('');
+      setShowImageInput(false);
+      setShowFileInput(false);
       toast.success('Posted! 🎉');
       fetchData();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to post');
+      toast.error(error.response?.data?.error || 'Failed');
     }
   };
 
@@ -173,7 +141,7 @@ function App() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this post? This cannot be undone.')) return;
+    if (!confirm('Delete this post?')) return;
     try {
       await axios.delete(`${API_URL}/api/posts/${id}`);
       toast.success('Post deleted');
@@ -247,7 +215,6 @@ function App() {
       {showConfetti && <Confetti recycle={false} numberOfPieces={200} />}
       <Toaster position="top-center" />
       
-      {/* Animated Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob" />
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-cyan-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000" />
@@ -255,7 +222,6 @@ function App() {
       </div>
 
       <div className="relative max-w-6xl mx-auto px-4 py-8">
-        {/* Header */}
         <header className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
             <motion.div whileHover={{ rotate: 360 }} transition={{ duration: 0.5 }}>
@@ -280,10 +246,7 @@ function App() {
                 </div>
               </div>
             )}
-            <button
-              onClick={() => setDarkMode(!darkMode)}
-              className="p-2 rounded-full hover:bg-white/10 transition-colors"
-            >
+            <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-full hover:bg-white/10 transition-colors">
               {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
           </div>
@@ -291,7 +254,6 @@ function App() {
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <div className="lg:col-span-3 space-y-6">
-            {/* Create Post */}
             <motion.div 
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
@@ -304,63 +266,47 @@ function App() {
                   placeholder="What's on your mind? (Use #hashtags)"
                   className={`w-full bg-transparent border-none text-lg resize-none focus:outline-none placeholder:opacity-50 ${darkMode ? 'text-white' : 'text-gray-900'}`}
                   rows={3}
-                  maxLength={1000}
+                  maxLength={500}
                 />
-                
-                {/* Media Preview */}
-                {mediaFiles.length > 0 && (
-                  <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2">
-                    {mediaFiles.map((file, index) => (
-                      <div key={index} className="relative group">
-                        {file.fileType === 'image' ? (
-                          <img src={file.fileUrl} alt={file.fileName} className="w-full h-24 object-cover rounded-lg" />
-                        ) : file.fileType === 'video' ? (
-                          <video src={file.fileUrl} className="w-full h-24 object-cover rounded-lg" controls />
-                        ) : (
-                          <div className="w-full h-24 bg-white/5 rounded-lg flex items-center justify-center">
-                            <File className="w-8 h-8 text-purple-400" />
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => removeMedia(index)}
-                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                {showImageInput && (
+                  <input
+                    type="url"
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    placeholder="Image URL (https://i.imgur.com/...)"
+                    className={`w-full mt-3 bg-transparent border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${darkMode ? 'text-white' : 'text-gray-900'}`}
+                  />
                 )}
-                
+                {showFileInput && (
+                  <input
+                    type="url"
+                    value={fileUrl}
+                    onChange={(e) => setFileUrl(e.target.value)}
+                    placeholder="File/Document URL"
+                    className={`w-full mt-3 bg-transparent border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${darkMode ? 'text-white' : 'text-gray-900'}`}
+                  />
+                )}
                 <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleFileSelect}
-                      accept="image/*,video/*,.pdf,.doc,.docx,.txt"
-                      multiple
-                      className="hidden"
-                    />
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploading}
-                      className={`p-2 rounded-lg transition-colors ${uploading ? 'opacity-50' : 'bg-white/5 hover:bg-white/10'}`}
-                      title="Upload from device"
+                      onClick={() => setShowImageInput(!showImageInput)}
+                      className={`p-2 rounded-lg transition-colors ${showImageInput ? 'bg-purple-500 text-white' : 'bg-white/5 hover:bg-white/10'}`}
                     >
-                      {uploading ? (
-                        <span className="animate-spin">⌛</span>
-                      ) : (
-                        <Plus className="w-4 h-4" />
-                      )}
+                      <ImageIcon className="w-4 h-4" />
                     </button>
-                    <span className="text-sm opacity-60">{newPost.length}/1000</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowFileInput(!showFileInput)}
+                      className={`p-2 rounded-lg transition-colors ${showFileInput ? 'bg-purple-500 text-white' : 'bg-white/5 hover:bg-white/10'}`}
+                    >
+                      <FileText className="w-4 h-4" />
+                    </button>
+                    <span className="text-sm opacity-60">{newPost.length}/500</span>
                   </div>
                   <button 
                     type="submit" 
-                    disabled={!newPost.trim() || uploading}
+                    disabled={!newPost.trim()}
                     className="px-6 py-2 bg-gradient-to-r from-purple-500 to-cyan-500 rounded-full font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
                     <Send className="w-4 h-4" />
@@ -370,7 +316,6 @@ function App() {
               </form>
             </motion.div>
 
-            {/* Filters */}
             <div className="flex items-center gap-4">
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-50" />
@@ -378,7 +323,7 @@ function App() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search echoes..."
+                  placeholder="Search echoes... (Press / to focus)"
                   className={`w-full pl-10 pr-4 py-2 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${darkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-100 border-gray-200'}`}
                 />
               </div>
@@ -391,7 +336,6 @@ function App() {
               </button>
             </div>
 
-            {/* Posts Feed */}
             <div className="space-y-4">
               {loading ? (
                 <div className="text-center py-12 opacity-50">Loading...</div>
@@ -420,9 +364,7 @@ function App() {
             </div>
           </div>
 
-          {/* Sidebar */}
           <div className="hidden lg:block space-y-6">
-            {/* Trending Hashtags */}
             <div className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
               <div className="flex items-center gap-2 mb-4">
                 <TrendingUp className="w-5 h-5 text-purple-500" />
@@ -444,8 +386,6 @@ function App() {
                 )}
               </div>
             </div>
-
-            {/* Stats */}
             {userStats && (
               <div className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
                 <div className="flex items-center gap-2 mb-4">
@@ -475,7 +415,6 @@ function App() {
   );
 }
 
-// Post Card Component
 function PostCard({ post, onVote, onBookmark, onDelete, onDownload, onShare, darkMode, cardColors }: any) {
   const [showComments, setShowComments] = useState(false);
   const [commentText, setCommentText] = useState('');
@@ -512,59 +451,32 @@ function PostCard({ post, onVote, onBookmark, onDelete, onDownload, onShare, dar
         </div>
         <div className="flex items-center gap-2">
           {post.isOwner && (
-            <button
-              onClick={() => onDelete(post.id)}
-              className="p-1.5 rounded-full hover:bg-red-500/20 text-red-400 transition-colors"
-              title="Delete post"
-            >
+            <button onClick={() => onDelete(post.id)} className="p-1.5 rounded-full hover:bg-red-500/20 text-red-400 transition-colors" title="Delete post">
               <Trash2 className="w-4 h-4" />
             </button>
           )}
-          <button
-            onClick={() => onDownload(post, postRef)}
-            className="p-1.5 rounded-full hover:bg-white/10 transition-colors"
-            title="Download as image"
-          >
+          <button onClick={() => onDownload(post, postRef)} className="p-1.5 rounded-full hover:bg-white/10 transition-colors" title="Download as image">
             <Download className="w-4 h-4" />
           </button>
-          <button
-            onClick={() => onBookmark(post.id)}
-            className={`p-1.5 rounded-full transition-colors ${post.isBookmarked ? 'text-purple-500 bg-purple-500/20' : 'opacity-50 hover:opacity-100'}`}
-            title="Bookmark"
-          >
+          <button onClick={() => onBookmark(post.id)} className={`p-1.5 rounded-full transition-colors ${post.isBookmarked ? 'text-purple-500 bg-purple-500/20' : 'opacity-50 hover:opacity-100'}`} title="Bookmark">
             <Bookmark className="w-4 h-4" />
           </button>
-          <button
-            onClick={() => onShare(post)}
-            className="p-1.5 rounded-full hover:bg-white/10 transition-colors"
-            title="Share"
-          >
+          <button onClick={() => onShare(post)} className="p-1.5 rounded-full hover:bg-white/10 transition-colors" title="Share">
             <Share2 className="w-4 h-4" />
           </button>
         </div>
       </div>
       <p className={`mb-4 leading-relaxed ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>{post.content}</p>
-      
-      {/* Media Gallery */}
-      {post.media && post.media.length > 0 && (
-        <div className="mb-4 grid grid-cols-2 md:grid-cols-3 gap-2">
-          {post.media.map((file: MediaFile, index: number) => (
-            <div key={index}>
-              {file.fileType === 'image' ? (
-                <img src={file.fileUrl} alt={file.fileName} className="w-full h-32 object-cover rounded-lg cursor-pointer hover:opacity-90" />
-              ) : file.fileType === 'video' ? (
-                <video src={file.fileUrl} className="w-full h-32 object-cover rounded-lg" controls />
-              ) : (
-                <a href={file.fileUrl} target="_blank" rel="noopener noreferrer" className="w-full h-32 bg-white/5 rounded-lg flex flex-col items-center justify-center gap-2 hover:bg-white/10 transition-colors">
-                  <File className="w-8 h-8 text-purple-400" />
-                  <span className="text-xs text-purple-400 text-center px-2">{file.fileName}</span>
-                </a>
-              )}
-            </div>
-          ))}
-        </div>
+      {post.imageUrl && (
+        <img src={post.imageUrl} alt="Post image" className="w-full rounded-lg mb-4 max-h-96 object-cover" />
       )}
-      
+      {post.fileUrl && post.fileName && (
+        <a href={post.fileUrl} target="_blank" rel="noopener noreferrer" className={`flex items-center gap-2 p-3 rounded-lg mb-4 transition-colors ${darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'}`}>
+          <Link className="w-4 h-4 text-purple-400" />
+          <span className="text-sm text-purple-400">{post.fileName}</span>
+          <ExternalLink className="w-4 h-4 ml-auto" />
+        </a>
+      )}
       <div className="flex items-center justify-between pt-4 border-t border-white/10">
         <div className="flex items-center gap-1">
           <button onClick={() => onVote(post.id, 'up')} className={`p-2 rounded-full transition-colors ${post.userVote === 'up' ? 'text-green-500 bg-green-500/20' : 'hover:bg-white/10'}`}>

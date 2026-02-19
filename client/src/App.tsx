@@ -4,14 +4,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Confetti from 'react-confetti';
 import html2canvas from 'html2canvas';
 import {
-  Send, Ghost, TrendingUp, Search, X, Image as ImageIcon,
+  Send, Ghost, TrendingUp, Search, Image as ImageIcon,
   ArrowUp, ArrowDown, MessageCircle, Share2, Bookmark,
   Moon, Sun, Zap, BarChart3, Hash, Download,
   Trash2, FileText, Link, ExternalLink
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// Fix: Cast import.meta.env for TypeScript
+const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001';
 
 interface Post {
   id: string;
@@ -35,6 +36,14 @@ interface Post {
   color?: number;
 }
 
+interface UserStats {
+  postsCount: number;
+  votesCount: number;
+  bookmarksCount: number;
+  totalUpvotes: number;
+  karma: number;
+}
+
 function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [newPost, setNewPost] = useState('');
@@ -45,7 +54,7 @@ function App() {
   const [darkMode, setDarkMode] = useState(true);
   const [showConfetti, setShowConfetti] = useState(false);
   const [trendingHashtags, setTrendingHashtags] = useState<any[]>([]);
-  const [userStats, setUserStats] = useState<any>(null);
+  const [userStats, setUserStats] = useState<UserStats | null>(null);
   const [activeFilter, setActiveFilter] = useState<'all' | 'bookmarked'>('all');
   const [showImageInput, setShowImageInput] = useState(false);
   const [showFileInput, setShowFileInput] = useState(false);
@@ -66,11 +75,10 @@ function App() {
 
   const fetchData = async () => {
     try {
-      const [postsRes, hashtagsRes, statsRes, trendingRes] = await Promise.all([
+      const [postsRes, hashtagsRes, statsRes] = await Promise.all([
         axios.get(`${API_URL}/api/posts`),
         axios.get(`${API_URL}/api/trending/hashtags`),
-        axios.get(`${API_URL}/api/stats`),
-        axios.get(`${API_URL}/api/trending`)
+        axios.get(`${API_URL}/api/stats`)
       ]);
       setPosts(postsRes.data);
       setTrendingHashtags(hashtagsRes.data);
@@ -202,14 +210,6 @@ function App() {
     return matchesSearch && matchesBookmark;
   });
 
-  const cardColors = [
-    'from-purple-500/20 to-blue-500/20',
-    'from-pink-500/20 to-rose-500/20',
-    'from-cyan-500/20 to-blue-500/20',
-    'from-amber-500/20 to-orange-500/20',
-    'from-emerald-500/20 to-teal-500/20'
-  ];
-
   return (
     <div className={`min-h-screen transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-white' : 'bg-gray-50 text-gray-900'}`}>
       {showConfetti && <Confetti recycle={false} numberOfPieces={200} />}
@@ -323,7 +323,7 @@ function App() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search echoes... (Press / to focus)"
+                  placeholder="Search echoes..."
                   className={`w-full pl-10 pr-4 py-2 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${darkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-100 border-gray-200'}`}
                 />
               </div>
@@ -356,7 +356,6 @@ function App() {
                       onDownload={handleDownload}
                       onShare={handleShare}
                       darkMode={darkMode}
-                      cardColors={cardColors}
                     />
                   ))}
                 </AnimatePresence>
@@ -415,7 +414,15 @@ function App() {
   );
 }
 
-function PostCard({ post, onVote, onBookmark, onDelete, onDownload, onShare, darkMode, cardColors }: any) {
+function PostCard({ post, onVote, onBookmark, onDelete, onDownload, onShare, darkMode }: {
+  post: Post;
+  onVote: (id: string, type: 'up' | 'down') => void;
+  onBookmark: (id: string) => void;
+  onDelete: (id: string) => void;
+  onDownload: (post: Post, ref: React.RefObject<HTMLDivElement>) => void;
+  onShare: (post: Post) => void;
+  darkMode: boolean;
+}) {
   const [showComments, setShowComments] = useState(false);
   const [commentText, setCommentText] = useState('');
   const postRef = useRef<HTMLDivElement>(null);

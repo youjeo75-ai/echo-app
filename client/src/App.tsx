@@ -4,27 +4,20 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Confetti from 'react-confetti';
 import html2canvas from 'html2canvas';
 import {
-  Send, Ghost, TrendingUp, Search, X, Image as ImageIcon,
+  Send, Ghost, TrendingUp, Search, Image as ImageIcon,
   ArrowUp, ArrowDown, MessageCircle, Share2, Bookmark,
   Moon, Sun, Zap, BarChart3, Hash, Download,
-  Trash2, FileText, Link, ExternalLink, Flag, Shield, LogOut, Users
+  Trash2, FileText, Link, ExternalLink, Shield, Users, Flag, Ban, CheckCircle, XCircle, LogOut, Eye, EyeOff
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 
 const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001';
 
-interface MediaFile {
-  fileUrl: string;
-  fileName: string;
-  fileType: 'image' | 'video' | 'file';
-  fileSize: number;
-}
-
 interface Post {
   id: string;
   content: string;
   tags: string[];
-  media?: MediaFile[];
+  media?: any[];
   upvotes: number;
   downvotes: number;
   netVotes: number;
@@ -37,40 +30,52 @@ interface Post {
   isBookmarked?: boolean;
   hashtags?: string[];
   color?: number;
-  isBanned?: boolean;
 }
 
-interface UserStats {
-  postsCount: number;
-  votesCount: number;
-  bookmarksCount: number;
-  totalUpvotes: number;
-  karma: number;
+interface Report {
+  id: string;
+  postId: string;
+  reportedBy: string;
+  reason: string;
+  timestamp: string;
+  status: 'pending' | 'resolved' | 'dismissed';
+  postContent?: string;
+  postOwner?: string;
+}
+
+interface Ban {
+  id: string;
+  userId: string;
+  reason: string;
+  timestamp: string;
+  expiresAt?: string;
 }
 
 function App() {
-  // App state
   const [posts, setPosts] = useState<Post[]>([]);
   const [newPost, setNewPost] = useState('');
-  const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
+  const [mediaFiles, setMediaFiles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [darkMode, setDarkMode] = useState(true);
   const [showConfetti, setShowConfetti] = useState(false);
   const [trendingHashtags, setTrendingHashtags] = useState<any[]>([]);
-  const [userStats, setUserStats] = useState<UserStats | null>(null);
+  const [userStats, setUserStats] = useState<any>(null);
   const [activeFilter, setActiveFilter] = useState<'all' | 'bookmarked'>('all');
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
+  
   // Admin state
-  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
-  const [adminToken, setAdminToken] = useState<string | null>(null);
-  const [adminPosts, setAdminPosts] = useState<any[]>([]);
-  const [bannedUsers, setBannedUsers] = useState<string[]>([]);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
-  const [adminTab, setAdminTab] = useState<'posts' | 'bans' | 'reports'>('posts');
+  const [adminPosts, setAdminPosts] = useState<Post[]>([]);
+  const [adminReports, setAdminReports] = useState<Report[]>([]);
+  const [adminBans, setAdminBans] = useState<Ban[]>([]);
+  const [banUserId, setBanUserId] = useState('');
+  const [banReason, setBanReason] = useState('');
+  const [banDuration, setBanDuration] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -102,22 +107,48 @@ function App() {
     }
   };
 
-  // File upload handler - opens device gallery/file picker
+  const handleAdminLogin = async () => {
+    try {
+      const response = await axios.post(`${API_URL}/api/admin/login`, { password: adminPassword });
+      if (response.data.success) {
+        setIsAdmin(true);
+        setShowAdminPanel(true);
+        loadAdminData();
+        toast.success('Admin access granted! 🔐');
+        setAdminPassword('');
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Invalid password');
+    }
+  };
+
+  const loadAdminData = async () => {
+    try {
+      const [postsRes, reportsRes, bansRes] = await Promise.all([
+        axios.get(`${API_URL}/api/admin/posts`, { headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` } }),
+        axios.get(`${API_URL}/api/admin/reports`, { headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` } }),
+        axios.get(`${API_URL}/api/admin/bans`, { headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` } })
+      ]);
+      setAdminPosts(postsRes.data);
+      setAdminReports(reportsRes.data);
+      setAdminBans(bansRes.data);
+    } catch (error) {
+      toast.error('Failed to load admin data');
+    }
+  };
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-
     setUploading(true);
     try {
       const formData = new FormData();
       for (let i = 0; i < files.length; i++) {
         formData.append('files', files[i]);
       }
-
       const response = await axios.post(`${API_URL}/api/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-
       setMediaFiles(prev => [...prev, ...response.data.files]);
       toast.success(`${files.length} file(s) uploaded!`);
     } catch (error) {
@@ -202,10 +233,10 @@ function App() {
     }
   };
 
-  const handleReport = async (id: string) => {
+  const handleReport = async (postId: string) => {
     const reason = prompt('Reason for report (optional):');
     try {
-      await axios.post(`${API_URL}/api/posts/${id}/report`, { reason });
+      await axios.post(`${API_URL}/api/posts/${postId}/report`, { reason });
       toast.success('Report submitted');
     } catch (error) {
       toast.error('Failed to submit report');
@@ -246,83 +277,66 @@ function App() {
   };
 
   // Admin functions
-  const handleAdminLogin = async () => {
-    try {
-      const response = await axios.post(`${API_URL}/api/admin/login`, { password: adminPassword });
-      if (response.data.success) {
-        setAdminToken(response.data.token);
-        setIsAdminMode(true);
-        setShowAdminPanel(true);
-        toast.success('Admin access granted');
-        fetchAdminData();
-      }
-    } catch (error) {
-      toast.error('Invalid admin password');
-    }
-  };
-
-  const fetchAdminData = async () => {
-    if (!adminToken) return;
-    try {
-      const [postsRes, bannedRes] = await Promise.all([
-        axios.get(`${API_URL}/api/admin/posts`, { headers: { Authorization: `Bearer ${adminToken}` } }),
-        axios.get(`${API_URL}/api/admin/banned`, { headers: { Authorization: `Bearer ${adminToken}` } })
-      ]);
-      setAdminPosts(postsRes.data);
-      setBannedUsers(bannedRes.data.banned);
-    } catch (error) {
-      toast.error('Failed to load admin data');
-    }
-  };
-
-  const handleBanUser = async (voterId: string, deletePosts = false) => {
-    if (!adminToken) return;
-    if (!confirm(`Ban this user? ${deletePosts ? 'This will also delete all their posts.' : ''}`)) return;
-    try {
-      await axios.post(`${API_URL}/api/admin/ban`, { voterId, reason: 'Admin action', deletePosts }, {
-        headers: { Authorization: `Bearer ${adminToken}` }
-      });
-      toast.success('User banned');
-      fetchAdminData();
-      fetchData();
-    } catch (error) {
-      toast.error('Failed to ban user');
-    }
-  };
-
-  const handleUnbanUser = async (voterId: string) => {
-    if (!adminToken) return;
-    try {
-      await axios.post(`${API_URL}/api/admin/unban`, { voterId }, {
-        headers: { Authorization: `Bearer ${adminToken}` }
-      });
-      toast.success('User unbanned');
-      fetchAdminData();
-    } catch (error) {
-      toast.error('Failed to unban user');
-    }
-  };
-
-  const handleAdminDeletePost = async (id: string) => {
-    if (!adminToken) return;
-    if (!confirm('Delete this post?')) return;
+  const handleAdminDelete = async (id: string) => {
+    if (!confirm('Delete this post as admin?')) return;
     try {
       await axios.delete(`${API_URL}/api/admin/posts/${id}`, {
-        headers: { Authorization: `Bearer ${adminToken}` }
+        headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` }
       });
-      toast.success('Post deleted');
-      fetchAdminData();
+      toast.success('Post deleted by admin');
+      loadAdminData();
       fetchData();
     } catch (error) {
       toast.error('Failed to delete post');
     }
   };
 
-  const handleAdminLogout = () => {
-    setAdminToken(null);
-    setIsAdminMode(false);
-    setShowAdminPanel(false);
-    toast.success('Admin session ended');
+  const handleBanUser = async () => {
+    if (!banUserId) {
+      toast.error('User ID is required');
+      return;
+    }
+    try {
+      const durationMs = banDuration ? parseInt(banDuration) * 60 * 60 * 1000 : undefined;
+      await axios.post(`${API_URL}/api/admin/ban`, {
+        userId: banUserId,
+        reason: banReason,
+        duration: durationMs
+      }, {
+        headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` }
+      });
+      toast.success(`User ${banUserId} banned!`);
+      setBanUserId('');
+      setBanReason('');
+      setBanDuration('');
+      loadAdminData();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to ban user');
+    }
+  };
+
+  const handleUnbanUser = async (userId: string) => {
+    try {
+      await axios.delete(`${API_URL}/api/admin/ban/${userId}`, {
+        headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` }
+      });
+      toast.success('User unbanned');
+      loadAdminData();
+    } catch (error) {
+      toast.error('Failed to unban user');
+    }
+  };
+
+  const handleResolveReport = async (reportId: string, status: 'resolved' | 'dismissed') => {
+    try {
+      await axios.patch(`${API_URL}/api/admin/reports/${reportId}`, { status }, {
+        headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` }
+      });
+      toast.success(`Report ${status}`);
+      loadAdminData();
+    } catch (error) {
+      toast.error('Failed to update report');
+    }
   };
 
   const filteredPosts = posts.filter(post => {
@@ -356,7 +370,7 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {userStats && (
+            {userStats && !isAdmin && (
               <div className="hidden md:flex items-center gap-4 px-4 py-2 rounded-full bg-white/5 backdrop-blur-sm">
                 <div className="flex items-center gap-1">
                   <Zap className="w-4 h-4 text-yellow-500" />
@@ -369,13 +383,13 @@ function App() {
                 </div>
               </div>
             )}
-            {/* Admin Button */}
-            {!isAdminMode ? (
-              <button onClick={() => setShowAdminPanel(true)} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Admin login">
-                <Shield className="w-5 h-5 opacity-50" />
+            {/* Admin Toggle */}
+            {isAdmin ? (
+              <button onClick={() => { setIsAdmin(false); setShowAdminPanel(false); }} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Exit admin">
+                <LogOut className="w-5 h-5" />
               </button>
             ) : (
-              <button onClick={() => setShowAdminPanel(true)} className="p-2 rounded-full bg-purple-500/20 text-purple-400 transition-colors" title="Admin panel">
+              <button onClick={() => setShowAdminPanel(!showAdminPanel)} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Admin panel">
                 <Shield className="w-5 h-5" />
               </button>
             )}
@@ -385,194 +399,166 @@ function App() {
           </div>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          <div className="lg:col-span-3 space-y-6">
-            {/* Create Post */}
-            <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
-              <form onSubmit={handleSubmit}>
-                <textarea value={newPost} onChange={(e) => setNewPost(e.target.value)} placeholder="What's on your mind? (Use #hashtags)" className={`w-full bg-transparent border-none text-lg resize-none focus:outline-none placeholder:opacity-50 ${darkMode ? 'text-white' : 'text-gray-900'}`} rows={3} maxLength={500} />
-                
-                {/* File Preview */}
-                {mediaFiles.length > 0 && (
-                  <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2">
-                    {mediaFiles.map((file, index) => (
-                      <div key={index} className="relative group">
-                        {file.fileType === 'image' ? (
-                          <img src={file.fileUrl} alt={file.fileName} className="w-full h-24 object-cover rounded-lg" />
-                        ) : file.fileType === 'video' ? (
-                          <video src={file.fileUrl} className="w-full h-24 object-cover rounded-lg" controls />
-                        ) : (
-                          <div className="w-full h-24 bg-white/5 rounded-lg flex items-center justify-center">
-                            <FileText className="w-8 h-8 text-purple-400" />
-                          </div>
-                        )}
-                        <button type="button" onClick={() => removeMedia(index)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
-                  <div className="flex items-center gap-2">
-                    {/* Hidden file input - opens device gallery/file picker */}
-                    <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,.pdf,.doc,.docx,.txt" multiple className="hidden" />
-                    <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className={`p-2 rounded-lg transition-colors ${uploading ? 'opacity-50' : 'bg-white/5 hover:bg-white/10'}`} title="Upload from device">
-                      {uploading ? <span className="animate-spin">⌛</span> : <ImageIcon className="w-4 h-4" />}
+        {/* Admin Panel */}
+        {showAdminPanel && (
+          <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8 p-6 rounded-2xl bg-gradient-to-r from-purple-500/20 to-cyan-500/20 border border-purple-500/30">
+            {!isAdmin ? (
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <label className="text-sm opacity-60">Admin Password</label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleAdminLogin()}
+                      className="flex-1 px-4 py-2 rounded-lg bg-white/10 border border-white/20 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      placeholder="Enter admin password"
+                    />
+                    <button onClick={() => setShowPassword(!showPassword)} className="p-2 hover:bg-white/10 rounded">
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
-                    <span className="text-sm opacity-60">{newPost.length}/500</span>
+                    <button onClick={handleAdminLogin} className="px-4 py-2 bg-purple-500 rounded-lg hover:opacity-90">Login</button>
                   </div>
-                  <button type="submit" disabled={!newPost.trim() || uploading} className="px-6 py-2 bg-gradient-to-r from-purple-500 to-cyan-500 rounded-full font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
-                    <Send className="w-4 h-4" /><span className="hidden sm:inline">Post</span>
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-
-            {/* Filters */}
-            <div className="flex items-center gap-4">
-              <div className="flex-1 relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-50" />
-                <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search echoes..." className={`w-full pl-10 pr-4 py-2 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${darkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-100 border-gray-200'}`} />
-              </div>
-              <button onClick={() => setActiveFilter(activeFilter === 'all' ? 'bookmarked' : 'all')} className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${activeFilter === 'bookmarked' ? 'bg-purple-500 text-white' : 'bg-white/5 hover:bg-white/10'}`}>
-                <Bookmark className="w-4 h-4 inline mr-2" />{activeFilter === 'all' ? 'Bookmarks' : 'All Posts'}
-              </button>
-            </div>
-
-            {/* Posts Feed */}
-            <div className="space-y-4">
-              {loading ? (<div className="text-center py-12 opacity-50">Loading...</div>) : filteredPosts.length === 0 ? (<div className="text-center py-12 opacity-50"><Ghost className="w-12 h-12 mx-auto mb-3" /><p>No echoes found</p></div>) : (
-                <AnimatePresence>
-                  {filteredPosts.map((post) => (
-                    <PostCard key={post.id} post={post} onVote={handleVote} onBookmark={handleBookmark} onDelete={handleDelete} onDownload={handleDownload} onShare={handleShare} onReport={handleReport} darkMode={darkMode} />
-                  ))}
-                </AnimatePresence>
-              )}
-            </div>
-          </div>
-
-          {/* Sidebar */}
-          <div className="hidden lg:block space-y-6">
-            <div className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
-              <div className="flex items-center gap-2 mb-4"><TrendingUp className="w-5 h-5 text-purple-500" /><h3 className="font-bold">Trending</h3></div>
-              <div className="space-y-2">
-                {trendingHashtags.length === 0 ? (<p className="text-sm opacity-50">No hashtags yet</p>) : (
-                  trendingHashtags.map((hashtag) => (
-                    <div key={hashtag.tag} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-white/5 transition-colors cursor-pointer">
-                      <div className="flex items-center gap-2"><Hash className="w-4 h-4 opacity-50" /><span className="text-sm font-medium">{hashtag.tag}</span></div>
-                      <span className="text-xs opacity-50">{hashtag.count}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-            {userStats && (
-              <div className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
-                <div className="flex items-center gap-2 mb-4"><BarChart3 className="w-5 h-5 text-cyan-500" /><h3 className="font-bold">Your Stats</h3></div>
-                <div className="space-y-3">
-                  <div className="flex justify-between text-sm"><span className="opacity-60">Posts</span><span className="font-medium">{userStats.postsCount}</span></div>
-                  <div className="flex justify-between text-sm"><span className="opacity-60">Total Upvotes</span><span className="font-medium text-green-500">{userStats.totalUpvotes}</span></div>
-                  <div className="flex justify-between text-sm"><span className="opacity-60">Karma</span><span className="font-medium text-purple-500">{userStats.karma}</span></div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Admin Panel Modal */}
-      {showAdminPanel && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowAdminPanel(false)}>
-          <div className={`rounded-2xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto ${darkMode ? 'bg-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">🔐 Admin Panel</h2>
-              <button onClick={() => setShowAdminPanel(false)} className="p-2 hover:bg-white/10 rounded-full"><X className="w-6 h-6" /></button>
-            </div>
-            
-            {!adminToken ? (
-              <div className="p-4 rounded-lg bg-white/5">
-                <h3 className="font-bold mb-3">🔐 Admin Login</h3>
-                <div className="flex gap-2">
-                  <input type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="Enter admin password" className={`flex-1 px-3 py-2 rounded-lg ${darkMode ? 'bg-white/10' : 'bg-gray-100'}`} onKeyPress={(e) => e.key === 'Enter' && handleAdminLogin()} />
-                  <button onClick={handleAdminLogin} className="px-4 py-2 bg-purple-500 rounded-lg hover:opacity-90">Login</button>
                 </div>
               </div>
             ) : (
-              <>
-                <div className="flex gap-2 mb-6 border-b border-white/10 pb-4">
-                  <button onClick={() => setAdminTab('posts')} className={`px-4 py-2 rounded-lg ${adminTab === 'posts' ? 'bg-purple-500 text-white' : 'bg-white/5 hover:bg-white/10'}`}>Posts</button>
-                  <button onClick={() => setAdminTab('bans')} className={`px-4 py-2 rounded-lg ${adminTab === 'bans' ? 'bg-purple-500 text-white' : 'bg-white/5 hover:bg-white/10'}`}>Bans</button>
-                  <button onClick={() => setAdminTab('reports')} className={`px-4 py-2 rounded-lg ${adminTab === 'reports' ? 'bg-purple-500 text-white' : 'bg-white/5 hover:bg-white/10'}`}>Reports</button>
-                  <button onClick={handleAdminLogout} className="ml-auto px-4 py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30"><LogOut className="w-4 h-4 inline mr-1" /> Logout</button>
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-bold flex items-center gap-2"><Shield className="w-5 h-5" /> Admin Panel</h2>
+                  <button onClick={() => loadAdminData()} className="px-3 py-1 bg-white/10 rounded-lg hover:bg-white/20 text-sm">Refresh</button>
                 </div>
                 
-                {adminTab === 'posts' && (
-                  <div className="space-y-4">
-                    <h3 className="font-bold">All Posts ({adminPosts.length})</h3>
-                    {adminPosts.map((post) => (
-                      <div key={post.id} className={`p-4 rounded-lg border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'}`}>
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <p className="text-sm mb-2">{post.content}</p>
-                            <div className="text-xs opacity-60 flex gap-4">
-                              <span>ID: {post.ownerId.slice(0, 12)}...</span>
-                              <span>🗨️ {post.commentCount}</span>
-                              <span>🗳️ {post.voteCount}</span>
-                              {post.isBanned && <span className="text-red-400">⚠️ BANNED</span>}
-                            </div>
-                          </div>
-                          <div className="flex gap-2 ml-4">
-                            <button onClick={() => handleAdminDeletePost(post.id)} className="p-2 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30" title="Delete post"><Trash2 className="w-4 h-4" /></button>
-                            <button onClick={() => handleBanUser(post.ownerId, true)} className="p-2 bg-orange-500/20 text-orange-400 rounded hover:bg-orange-500/30" title="Ban user & delete posts"><Flag className="w-4 h-4" /></button>
-                          </div>
+                {/* Quick Actions */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 rounded-xl bg-white/5">
+                    <div className="flex items-center gap-2 mb-2"><Users className="w-4 h-4" /><span className="font-medium">Active Bans</span></div>
+                    <p className="text-2xl font-bold">{adminBans.length}</p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-white/5">
+                    <div className="flex items-center gap-2 mb-2"><Flag className="w-4 h-4" /><span className="font-medium">Pending Reports</span></div>
+                    <p className="text-2xl font-bold">{adminReports.filter(r => r.status === 'pending').length}</p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-white/5">
+                    <div className="flex items-center gap-2 mb-2"><Trash2 className="w-4 h-4" /><span className="font-medium">Total Posts</span></div>
+                    <p className="text-2xl font-bold">{adminPosts.length}</p>
+                  </div>
+                </div>
+
+                {/* Ban User */}
+                <div className="p-4 rounded-xl bg-white/5">
+                  <h3 className="font-medium mb-3 flex items-center gap-2"><Ban className="w-4 h-4" /> Ban User</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <input type="text" value={banUserId} onChange={(e) => setBanUserId(e.target.value)} placeholder="User ID" className="px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-sm" />
+                    <input type="text" value={banReason} onChange={(e) => setBanReason(e.target.value)} placeholder="Reason" className="px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-sm" />
+                    <input type="number" value={banDuration} onChange={(e) => setBanDuration(e.target.value)} placeholder="Duration (hours)" className="px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-sm" />
+                    <button onClick={handleBanUser} className="px-4 py-2 bg-red-500 rounded-lg hover:opacity-90 text-sm">Ban</button>
+                  </div>
+                </div>
+
+                {/* Reports */}
+                <div>
+                  <h3 className="font-medium mb-3 flex items-center gap-2"><Flag className="w-4 h-4" /> Reports</h3>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {adminReports.filter(r => r.status === 'pending').map(report => (
+                      <div key={report.id} className="p-3 rounded-lg bg-white/5 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium">Post: {report.postContent?.substring(0, 50)}...</p>
+                          <p className="text-xs opacity-60">Reason: {report.reason} • By: {report.reportedBy.substring(0, 10)}...</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => handleResolveReport(report.id, 'resolved')} className="p-2 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30" title="Resolve"><CheckCircle className="w-4 h-4" /></button>
+                          <button onClick={() => handleResolveReport(report.id, 'dismissed')} className="p-2 bg-gray-500/20 text-gray-400 rounded hover:bg-gray-500/30" title="Dismiss"><XCircle className="w-4 h-4" /></button>
                         </div>
                       </div>
                     ))}
+                    {adminReports.filter(r => r.status === 'pending').length === 0 && <p className="text-sm opacity-50">No pending reports</p>}
                   </div>
-                )}
-                
-                {adminTab === 'bans' && (
-                  <div className="space-y-4">
-                    <h3 className="font-bold">Banned Users ({bannedUsers.length})</h3>
-                    {bannedUsers.length === 0 ? (<p className="opacity-60">No banned users</p>) : (
-                      bannedUsers.map((userId) => (
-                        <div key={userId} className={`p-4 rounded-lg border flex items-center justify-between ${darkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-gray-200'}`}>
-                          <span className="text-sm font-mono">{userId}</span>
-                          <button onClick={() => handleUnbanUser(userId)} className="px-3 py-1 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30 text-sm">Unban</button>
+                </div>
+
+                {/* Recent Posts (Admin Delete) */}
+                <div>
+                  <h3 className="font-medium mb-3 flex items-center gap-2"><Trash2 className="w-4 h-4" /> Recent Posts</h3>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {adminPosts.slice(0, 10).map(post => (
+                      <div key={post.id} className="p-3 rounded-lg bg-white/5 flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm truncate">{post.content}</p>
+                          <p className="text-xs opacity-60">By: {post.ownerId.substring(0, 10)}... • {new Date(post.timestamp).toLocaleDateString()}</p>
                         </div>
-                      ))
-                    )}
+                        <button onClick={() => handleAdminDelete(post.id)} className="p-2 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    ))}
                   </div>
-                )}
-                
-                {adminTab === 'reports' && (
-                  <div className="space-y-4">
-                    <h3 className="font-bold">Reports</h3>
-                    <p className="opacity-60 text-sm">Reports will appear here when users flag content.</p>
-                  </div>
-                )}
-              </>
+                </div>
+              </div>
             )}
+          </motion.div>
+        )}
+
+        {/* Main Content */}
+        {!isAdmin && (
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="lg:col-span-3 space-y-6">
+              {/* Create Post */}
+              <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
+                <form onSubmit={handleSubmit}>
+                  <textarea value={newPost} onChange={(e) => setNewPost(e.target.value)} placeholder="What's on your mind? (Use #hashtags)" className={`w-full bg-transparent border-none text-lg resize-none focus:outline-none placeholder:opacity-50 ${darkMode ? 'text-white' : 'text-gray-900'}`} rows={3} maxLength={1000} />
+                  {mediaFiles.length > 0 && (
+                    <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {mediaFiles.map((file, index) => (
+                        <div key={index} className="relative group">
+                          {file.fileType === 'image' ? <img src={file.fileUrl} alt={file.fileName} className="w-full h-24 object-cover rounded-lg" /> : file.fileType === 'video' ? <video src={file.fileUrl} className="w-full h-24 object-cover rounded-lg" controls /> : <div className="w-full h-24 bg-white/5 rounded-lg flex items-center justify-center"><FileText className="w-8 h-8 text-purple-400" /></div>}
+                          <button type="button" onClick={() => removeMedia(index)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"><XCircle className="w-3 h-3" /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/10">
+                    <div className="flex items-center gap-2">
+                      <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,.pdf,.doc,.docx,.txt" multiple className="hidden" />
+                      <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className={`p-2 rounded-lg transition-colors ${uploading ? 'opacity-50' : 'bg-white/5 hover:bg-white/10'}`} title="Upload from device">{uploading ? '⌛' : <ImageIcon className="w-4 h-4" />}</button>
+                      <span className="text-sm opacity-60">{newPost.length}/1000</span>
+                    </div>
+                    <button type="submit" disabled={!newPost.trim() || uploading} className="px-6 py-2 bg-gradient-to-r from-purple-500 to-cyan-500 rounded-full font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"><Send className="w-4 h-4" /><span className="hidden sm:inline">Post</span></button>
+                  </div>
+                </form>
+              </motion.div>
+
+              {/* Filters */}
+              <div className="flex items-center gap-4">
+                <div className="flex-1 relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-50" />
+                  <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search echoes..." className={`w-full pl-10 pr-4 py-2 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${darkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-100 border-gray-200'}`} />
+                </div>
+                <button onClick={() => setActiveFilter(activeFilter === 'all' ? 'bookmarked' : 'all')} className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${activeFilter === 'bookmarked' ? 'bg-purple-500 text-white' : 'bg-white/5 hover:bg-white/10'}`}><Bookmark className="w-4 h-4 inline mr-2" />{activeFilter === 'all' ? 'Bookmarks' : 'All Posts'}</button>
+              </div>
+
+              {/* Posts Feed */}
+              <div className="space-y-4">
+                {loading ? <div className="text-center py-12 opacity-50">Loading...</div> : filteredPosts.length === 0 ? <div className="text-center py-12 opacity-50"><Ghost className="w-12 h-12 mx-auto mb-3" /><p>No echoes found</p></div> : (
+                  <AnimatePresence>{filteredPosts.map((post) => (<PostCard key={post.id} post={post} onVote={handleVote} onBookmark={handleBookmark} onDelete={handleDelete} onDownload={handleDownload} onShare={handleShare} onReport={handleReport} darkMode={darkMode} />))}</AnimatePresence>
+                )}
+              </div>
+            </div>
+
+            {/* Sidebar */}
+            <div className="hidden lg:block space-y-6">
+              <div className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
+                <div className="flex items-center gap-2 mb-4"><TrendingUp className="w-5 h-5 text-purple-500" /><h3 className="font-bold">Trending</h3></div>
+                <div className="space-y-2">{trendingHashtags.length === 0 ? <p className="text-sm opacity-50">No hashtags yet</p> : trendingHashtags.map((hashtag) => (<div key={hashtag.tag} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"><div className="flex items-center gap-2"><Hash className="w-4 h-4 opacity-50" /><span className="text-sm font-medium">{hashtag.tag}</span></div><span className="text-xs opacity-50">{hashtag.count}</span></div>))}</div>
+              </div>
+              {userStats && (<div className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}><div className="flex items-center gap-2 mb-4"><BarChart3 className="w-5 h-5 text-cyan-500" /><h3 className="font-bold">Your Stats</h3></div><div className="space-y-3"><div className="flex justify-between text-sm"><span className="opacity-60">Posts</span><span className="font-medium">{userStats.postsCount}</span></div><div className="flex justify-between text-sm"><span className="opacity-60">Total Upvotes</span><span className="font-medium text-green-500">{userStats.totalUpvotes}</span></div><div className="flex justify-between text-sm"><span className="opacity-60">Karma</span><span className="font-medium text-purple-500">{userStats.karma}</span></div></div></div>)}
+            </div>
           </div>
-        </motion.div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
 // Post Card Component
-function PostCard({ post, onVote, onBookmark, onDelete, onDownload, onShare, onReport, darkMode }: {
-  post: Post;
-  onVote: (id: string, type: 'up' | 'down') => void;
-  onBookmark: (id: string) => void;
-  onDelete: (id: string) => void;
-  onDownload: (post: Post, ref: React.RefObject<HTMLDivElement>) => void;
-  onShare: (post: Post) => void;
-  onReport: (id: string) => void;
-  darkMode: boolean;
-}) {
+function PostCard({ post, onVote, onBookmark, onDelete, onDownload, onShare, onReport, darkMode }: any) {
   const [showComments, setShowComments] = useState(false);
   const [commentText, setCommentText] = useState('');
   const postRef = useRef<HTMLDivElement>(null);
@@ -592,39 +578,17 @@ function PostCard({ post, onVote, onBookmark, onDelete, onDownload, onShare, onR
   return (
     <motion.div ref={postRef} layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className={`rounded-2xl p-6 backdrop-blur-xl border transition-all hover:scale-[1.01] ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
       <div className="flex items-start justify-between mb-3">
-        <div className="flex gap-2 flex-wrap">
-          {post.hashtags?.map((tag: string) => (<span key={tag} className="text-xs px-2 py-1 rounded-full bg-purple-500/20 text-purple-400">{tag}</span>))}
-        </div>
+        <div className="flex gap-2 flex-wrap">{post.hashtags?.map((tag: string) => (<span key={tag} className="text-xs px-2 py-1 rounded-full bg-purple-500/20 text-purple-400">{tag}</span>))}</div>
         <div className="flex items-center gap-2">
           {post.isOwner && (<button onClick={() => onDelete(post.id)} className="p-1.5 rounded-full hover:bg-red-500/20 text-red-400 transition-colors" title="Delete post"><Trash2 className="w-4 h-4" /></button>)}
+          <button onClick={() => onReport(post.id)} className="p-1.5 rounded-full hover:bg-yellow-500/20 text-yellow-400 transition-colors" title="Report"><Flag className="w-4 h-4" /></button>
           <button onClick={() => onDownload(post, postRef)} className="p-1.5 rounded-full hover:bg-white/10 transition-colors" title="Download as image"><Download className="w-4 h-4" /></button>
           <button onClick={() => onBookmark(post.id)} className={`p-1.5 rounded-full transition-colors ${post.isBookmarked ? 'text-purple-500 bg-purple-500/20' : 'opacity-50 hover:opacity-100'}`} title="Bookmark"><Bookmark className="w-4 h-4" /></button>
-          <button onClick={() => onReport(post.id)} className="p-1.5 rounded-full hover:bg-white/10 transition-colors" title="Report"><Flag className="w-4 h-4" /></button>
           <button onClick={() => onShare(post)} className="p-1.5 rounded-full hover:bg-white/10 transition-colors" title="Share"><Share2 className="w-4 h-4" /></button>
         </div>
       </div>
       <p className={`mb-4 leading-relaxed ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>{post.content}</p>
-      
-      {/* Media Gallery */}
-      {post.media && post.media.length > 0 && (
-        <div className="mb-4 grid grid-cols-2 md:grid-cols-3 gap-2">
-          {post.media.map((file: MediaFile, index: number) => (
-            <div key={index}>
-              {file.fileType === 'image' ? (
-                <img src={file.fileUrl} alt={file.fileName} className="w-full h-32 object-cover rounded-lg cursor-pointer hover:opacity-90" />
-              ) : file.fileType === 'video' ? (
-                <video src={file.fileUrl} className="w-full h-32 object-cover rounded-lg" controls />
-              ) : (
-                <a href={file.fileUrl} target="_blank" rel="noopener noreferrer" className="w-full h-32 bg-white/5 rounded-lg flex flex-col items-center justify-center gap-2 hover:bg-white/10 transition-colors">
-                  <FileText className="w-8 h-8 text-purple-400" />
-                  <span className="text-xs text-purple-400 text-center px-2">{file.fileName}</span>
-                </a>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      
+      {post.media && post.media.length > 0 && (<div className="mb-4 grid grid-cols-2 md:grid-cols-3 gap-2">{post.media.map((file: any, index: number) => (<div key={index}>{file.fileType === 'image' ? <img src={file.fileUrl} alt={file.fileName} className="w-full h-32 object-cover rounded-lg cursor-pointer hover:opacity-90" /> : file.fileType === 'video' ? <video src={file.fileUrl} className="w-full h-32 object-cover rounded-lg" controls /> : <a href={file.fileUrl} target="_blank" rel="noopener noreferrer" className="w-full h-32 bg-white/5 rounded-lg flex flex-col items-center justify-center gap-2 hover:bg-white/10 transition-colors"><FileText className="w-8 h-8 text-purple-400" /><span className="text-xs text-purple-400 text-center px-2">{file.fileName}</span></a>}</div>))}</div>)}
       <div className="flex items-center justify-between pt-4 border-t border-white/10">
         <div className="flex items-center gap-1">
           <button onClick={() => onVote(post.id, 'up')} className={`p-2 rounded-full transition-colors ${post.userVote === 'up' ? 'text-green-500 bg-green-500/20' : 'hover:bg-white/10'}`}><ArrowUp className="w-4 h-4" /></button>
@@ -637,15 +601,7 @@ function PostCard({ post, onVote, onBookmark, onDelete, onDownload, onShare, onR
           <button onClick={() => setShowComments(!showComments)} className="flex items-center gap-1 text-sm opacity-60 hover:opacity-100 transition-opacity"><MessageCircle className="w-4 h-4" />{post.commentCount || 0}</button>
         </div>
       </div>
-      {showComments && (
-        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="mt-4 pt-4 border-t border-white/10 space-y-3">
-          {post.comments?.map((comment: any) => (<div key={comment.id} className={`text-sm p-3 rounded-lg ${darkMode ? 'bg-white/5' : 'bg-gray-100'}`}>{comment.content}</div>))}
-          <form onSubmit={handleComment} className="flex gap-2">
-            <input type="text" value={commentText} onChange={(e) => setCommentText(e.target.value)} placeholder="Add a comment..." className={`flex-1 px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${darkMode ? 'bg-white/5' : 'bg-gray-100'}`} />
-            <button type="submit" className="px-4 py-2 bg-purple-500 rounded-lg text-sm font-medium hover:opacity-90">Post</button>
-          </form>
-        </motion.div>
-      )}
+      {showComments && (<motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="mt-4 pt-4 border-t border-white/10 space-y-3">{post.comments?.map((comment: any) => (<div key={comment.id} className={`text-sm p-3 rounded-lg ${darkMode ? 'bg-white/5' : 'bg-gray-100'}`}>{comment.content}</div>))}<form onSubmit={handleComment} className="flex gap-2"><input type="text" value={commentText} onChange={(e) => setCommentText(e.target.value)} placeholder="Add a comment..." className={`flex-1 px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${darkMode ? 'bg-white/5' : 'bg-gray-100'}`} /><button type="submit" className="px-4 py-2 bg-purple-500 rounded-lg text-sm font-medium hover:opacity-90">Post</button></form></motion.div>)}
     </motion.div>
   );
 }

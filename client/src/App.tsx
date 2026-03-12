@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Confetti from 'react-confetti';
 import html2canvas from 'html2canvas';
 import {
-  Send, Ghost, TrendingUp, Search, Image as ImageIcon,
+  Send, Ghost, TrendingUp, Search, X, Image as ImageIcon,
   ArrowUp, ArrowDown, MessageCircle, Share2, Bookmark,
   Moon, Sun, Zap, BarChart3, Hash, Download,
   Trash2, FileText, Link, ExternalLink, Shield, Users, Flag, Ban, CheckCircle, XCircle, LogOut, Eye, EyeOff
@@ -108,7 +108,6 @@ function App() {
     }
   };
 
-  // ✅ FIXED: Admin login sends password to backend for verification
   const handleAdminLogin = async () => {
     try {
       const response = await axios.post(`${API_URL}/api/admin/login`, { 
@@ -118,7 +117,7 @@ function App() {
       if (response.data.success) {
         setIsAdmin(true);
         setShowAdminPanel(true);
-        setAdminToken(response.data.token); // Store token for API calls
+        setAdminToken(response.data.token);
         loadAdminData();
         toast.success('Admin access granted! 🔐');
         setAdminPassword('');
@@ -283,7 +282,6 @@ function App() {
     toast.success('Copied to clipboard!');
   };
 
-  // ✅ FIXED: Admin functions use adminToken instead of ADMIN_PASSWORD
   const handleAdminDelete = async (id: string) => {
     if (!confirm('Delete this post as admin?')) return;
     try {
@@ -357,7 +355,6 @@ function App() {
       {showConfetti && <Confetti recycle={false} numberOfPieces={200} />}
       <Toaster position="top-center" />
       
-      {/* Animated Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob" />
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-cyan-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000" />
@@ -365,7 +362,6 @@ function App() {
       </div>
 
       <div className="relative max-w-6xl mx-auto px-4 py-8">
-        {/* Header */}
         <header className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
             <motion.div whileHover={{ rotate: 360 }} transition={{ duration: 0.5 }}>
@@ -390,7 +386,6 @@ function App() {
                 </div>
               </div>
             )}
-            {/* Admin Toggle */}
             {isAdmin ? (
               <button onClick={() => { setIsAdmin(false); setShowAdminPanel(false); setAdminToken(null); }} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Exit admin">
                 <LogOut className="w-5 h-5" />
@@ -406,7 +401,6 @@ function App() {
           </div>
         </header>
 
-        {/* Admin Panel */}
         {showAdminPanel && (
           <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8 p-6 rounded-2xl bg-gradient-to-r from-purple-500/20 to-cyan-500/20 border border-purple-500/30">
             {!isAdmin ? (
@@ -436,7 +430,6 @@ function App() {
                   <button onClick={() => loadAdminData()} className="px-3 py-1 bg-white/10 rounded-lg hover:bg-white/20 text-sm">Refresh</button>
                 </div>
                 
-                {/* Quick Actions */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="p-4 rounded-xl bg-white/5">
                     <div className="flex items-center gap-2 mb-2"><Users className="w-4 h-4" /><span className="font-medium">Active Bans</span></div>
@@ -452,7 +445,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* Ban User */}
                 <div className="p-4 rounded-xl bg-white/5">
                   <h3 className="font-medium mb-3 flex items-center gap-2"><Ban className="w-4 h-4" /> Ban User</h3>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -463,7 +455,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* Reports */}
                 <div>
                   <h3 className="font-medium mb-3 flex items-center gap-2"><Flag className="w-4 h-4" /> Reports</h3>
                   <div className="space-y-2 max-h-60 overflow-y-auto">
@@ -483,7 +474,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* Recent Posts (Admin Delete) */}
                 <div>
                   <h3 className="font-medium mb-3 flex items-center gap-2"><Trash2 className="w-4 h-4" /> Recent Posts</h3>
                   <div className="space-y-2 max-h-60 overflow-y-auto">
@@ -503,11 +493,9 @@ function App() {
           </motion.div>
         )}
 
-        {/* Main Content */}
         {!isAdmin && (
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             <div className="lg:col-span-3 space-y-6">
-              {/* Create Post */}
               <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
                 <form onSubmit={handleSubmit}>
                   <textarea value={newPost} onChange={(e) => setNewPost(e.target.value)} placeholder="What's on your mind? (Use #hashtags)" className={`w-full bg-transparent border-none text-lg resize-none focus:outline-none placeholder:opacity-50 ${darkMode ? 'text-white' : 'text-gray-900'}`} rows={3} maxLength={1000} />
@@ -532,7 +520,6 @@ function App() {
                 </form>
               </motion.div>
 
-              {/* Filters */}
               <div className="flex items-center gap-4">
                 <div className="flex-1 relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-50" />
@@ -541,7 +528,6 @@ function App() {
                 <button onClick={() => setActiveFilter(activeFilter === 'all' ? 'bookmarked' : 'all')} className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${activeFilter === 'bookmarked' ? 'bg-purple-500 text-white' : 'bg-white/5 hover:bg-white/10'}`}><Bookmark className="w-4 h-4 inline mr-2" />{activeFilter === 'all' ? 'Bookmarks' : 'All Posts'}</button>
               </div>
 
-              {/* Posts Feed */}
               <div className="space-y-4">
                 {loading ? <div className="text-center py-12 opacity-50">Loading...</div> : filteredPosts.length === 0 ? <div className="text-center py-12 opacity-50"><Ghost className="w-12 h-12 mx-auto mb-3" /><p>No echoes found</p></div> : (
                   <AnimatePresence>{filteredPosts.map((post) => (<PostCard key={post.id} post={post} onVote={handleVote} onBookmark={handleBookmark} onDelete={handleDelete} onDownload={handleDownload} onShare={handleShare} onReport={handleReport} darkMode={darkMode} />))}</AnimatePresence>
@@ -549,7 +535,6 @@ function App() {
               </div>
             </div>
 
-            {/* Sidebar */}
             <div className="hidden lg:block space-y-6">
               <div className={`rounded-2xl p-6 backdrop-blur-xl border ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-lg'}`}>
                 <div className="flex items-center gap-2 mb-4"><TrendingUp className="w-5 h-5 text-purple-500" /><h3 className="font-bold">Trending</h3></div>
@@ -564,7 +549,6 @@ function App() {
   );
 }
 
-// Post Card Component
 function PostCard({ post, onVote, onBookmark, onDelete, onDownload, onShare, onReport, darkMode }: any) {
   const [showComments, setShowComments] = useState(false);
   const [commentText, setCommentText] = useState('');

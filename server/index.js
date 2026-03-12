@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
@@ -6,15 +5,14 @@ const fs = require('fs').promises;
 const path = require('path');
 const multer = require('multer');
 
-// 🔐 ADD THIS - Admin password
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'echo-admin-2024';
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DB_FILE = path.join(__dirname, 'db.json');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 
-// ... rest of your existing code ...
+// 🔐 ADMIN PASSWORD (Change this!)
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'echo-admin-2024';
+
 // Create uploads directory
 if (!fs.existsSync(UPLOAD_DIR)) {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -24,7 +22,7 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
         try {
-            await fsPromises.mkdir(UPLOAD_DIR, { recursive: true });
+            await fs.mkdir(UPLOAD_DIR, { recursive: true });
             cb(null, UPLOAD_DIR);
         } catch (error) {
             cb(error);
@@ -51,9 +49,8 @@ const upload = multer({
     }
 });
 
-// CORS
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:3001', process.env.CLIENT_URL || '*', /.vercel.app$/, /.onrender.com$/],
+    origin: ['http://localhost:5173', 'http://localhost:3001', process.env.CLIENT_URL || '*'],
     credentials: true
 }));
 
@@ -71,20 +68,19 @@ const initializeDB = async () => {
         reports: [],
         bans: []
     };
-    await fsPromises.writeFile(DB_FILE, JSON.stringify(data, null, 2));
+    await fs.writeFile(DB_FILE, JSON.stringify(data, null, 2));
     console.log('✅ Database initialized');
     return data;
 };
 
 const readDB = async () => {
     try {
-        const exists = await fsPromises.access(DB_FILE).then(() => true).catch(() => false);
+        const exists = await fs.access(DB_FILE).then(() => true).catch(() => false);
         if (!exists) return await initializeDB();
         
-        const data = await fsPromises.readFile(DB_FILE, 'utf8');
+        const data = await fs.readFile(DB_FILE, 'utf8');
         const parsed = JSON.parse(data);
         
-        // Ensure all arrays exist
         if (!parsed.posts) parsed.posts = [];
         if (!parsed.comments) parsed.comments = [];
         if (!parsed.votes) parsed.votes = [];
@@ -101,7 +97,7 @@ const readDB = async () => {
 };
 
 const writeDB = async (data) => {
-    await fsPromises.writeFile(DB_FILE, JSON.stringify(data, null, 2));
+    await fs.writeFile(DB_FILE, JSON.stringify(data, null, 2));
 };
 
 const getVoterId = (req) => {
@@ -116,28 +112,170 @@ const extractHashtags = (content) => {
     return [...new Set(matches.map(tag => tag.toLowerCase()))];
 };
 
-// Admin authentication middleware
-const requireAdmin = (req, res, next) => {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.replace('Bearer ', '');
-    
-    if (token === ADMIN_PASSWORD) {
-        next();
-    } else {
-        res.status(403).json({ error: 'Admin access required' });
-    }
-};
-
-// Check if user is banned
 const isBanned = (db, voterId) => {
     return db.bans.some(ban => ban.userId === voterId && (!ban.expiresAt || new Date(ban.expiresAt) > new Date()));
 };
 
 // ============================================
-// PUBLIC API ROUTES
+// ADMIN ROUTES (Add these!)
 // ============================================
 
-// GET all posts (filter banned users)
+// Admin login
+app.post('/api/admin/login', (req, res) => {
+    const { password } = req.body;
+    console.log('Admin login attempt:', password === ADMIN_PASSWORD ? 'SUCCESS' : 'FAILED');
+    if (password === ADMIN_PASSWORD) {
+        res.json({ success: true, token: ADMIN_PASSWORD });
+    } else {
+        res.status(401).json({ error: 'Invalid admin password' });
+    }
+});
+
+// Get all posts (admin)
+app.get('/api/admin/posts', (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '');
+    
+    if (token !== ADMIN_PASSWORD) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    readDB().then(db => {
+        res.json(db.posts || []);
+    });
+});
+
+// Get all reports
+app.get('/api/admin/reports', (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '');
+    
+    if (token !== ADMIN_PASSWORD) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    readDB().then(db => {
+        const reportsWithDetails = (db.reports || []).map(report => {
+            const post = db.posts.find(p => p.id === report.postId);
+            return { ...report, postContent: post?.content, postOwner: post?.ownerId };
+        });
+        res.json(reportsWithDetails);
+    });
+});
+
+// Get all bans
+app.get('/api/admin/bans', (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '');
+    
+    if (token !== ADMIN_PASSWORD) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    readDB().then(db => {
+        res.json(db.bans || []);
+    });
+});
+
+// Ban user
+app.post('/api/admin/ban', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '');
+    
+    if (token !== ADMIN_PASSWORD) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const { userId, reason, duration } = req.body;
+    const db = await readDB();
+    
+    if (!db.bans) db.bans = [];
+    db.bans = db.bans.filter(b => b.userId !== userId);
+    
+    db.bans.push({
+        id: uuidv4(),
+        userId,
+        reason: reason || 'No reason provided',
+        bannedBy: 'admin',
+        timestamp: new Date().toISOString(),
+        expiresAt: duration ? new Date(Date.now() + duration).toISOString() : null
+    });
+    
+    await writeDB(db);
+    res.json({ success: true });
+});
+
+// Unban user
+app.delete('/api/admin/ban/:userId', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '');
+    
+    if (token !== ADMIN_PASSWORD) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const { userId } = req.params;
+    const db = await readDB();
+    
+    if (db.bans) {
+        db.bans = db.bans.filter(b => b.userId !== userId);
+        await writeDB(db);
+    }
+    
+    res.json({ success: true });
+});
+
+// Delete any post (admin)
+app.delete('/api/admin/posts/:id', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '');
+    
+    if (token !== ADMIN_PASSWORD) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const { id } = req.params;
+    const db = await readDB();
+    
+    if (db.posts) db.posts = db.posts.filter(p => p.id !== id);
+    if (db.comments) db.comments = db.comments.filter(c => c.postId !== id);
+    if (db.votes) db.votes = db.votes.filter(v => v.postId !== id);
+    if (db.bookmarks) db.bookmarks = db.bookmarks.filter(b => b.postId !== id);
+    
+    await writeDB(db);
+    res.json({ success: true });
+});
+
+// Update report status
+app.patch('/api/admin/reports/:id', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '');
+    
+    if (token !== ADMIN_PASSWORD) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const { id } = req.params;
+    const { status } = req.body;
+    const db = await readDB();
+    
+    if (db.reports) {
+        const report = db.reports.find(r => r.id === id);
+        if (report) {
+            report.status = status;
+            report.resolvedAt = new Date().toISOString();
+            await writeDB(db);
+        }
+    }
+    
+    res.json({ success: true });
+});
+
+// ============================================
+// PUBLIC ROUTES
+// ============================================
+
+// GET all posts
 app.get('/api/posts', async (req, res) => {
     try {
         const db = await readDB();
@@ -148,7 +286,7 @@ app.get('/api/posts', async (req, res) => {
         }
         
         const posts = db.posts
-            .filter(post => !isBanned(db, post.ownerId)) // Filter banned users
+            .filter(post => !isBanned(db, post.ownerId))
             .map(post => {
                 const userVote = db.votes.find(v => v.postId === post.id && v.voterId === voterId);
                 const postComments = db.comments.filter(c => c.postId === post.id && !isBanned(db, c.ownerId));
@@ -177,7 +315,7 @@ app.get('/api/posts', async (req, res) => {
     }
 });
 
-// POST create post (check ban)
+// POST create post
 app.post('/api/posts', async (req, res) => {
     try {
         const { content, tags, imageUrl, fileUrl, fileName, fileType, media } = req.body;
@@ -186,14 +324,9 @@ app.post('/api/posts', async (req, res) => {
             return res.status(400).json({ error: 'Content is required' });
         }
         
-        if (content.length > 1000) {
-            return res.status(400).json({ error: 'Content must be under 1000 characters' });
-        }
-        
         const db = await readDB();
         const ownerId = getVoterId(req);
         
-        // Check if user is banned
         if (isBanned(db, ownerId)) {
             return res.status(403).json({ error: 'Your account has been banned' });
         }
@@ -229,88 +362,6 @@ app.post('/api/posts', async (req, res) => {
     }
 });
 
-// POST comment (check ban)
-app.post('/api/posts/:id/comments', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { content } = req.body;
-        
-        if (!content || content.trim().length === 0) {
-            return res.status(400).json({ error: 'Comment required' });
-        }
-        
-        const db = await readDB();
-        const ownerId = getVoterId(req);
-        
-        // Check if user is banned
-        if (isBanned(db, ownerId)) {
-            return res.status(403).json({ error: 'Your account has been banned' });
-        }
-        
-        const post = db.posts.find(p => p.id === id);
-        if (!post) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-        
-        if (!db.comments || !Array.isArray(db.comments)) {
-            db.comments = [];
-        }
-        
-        const newComment = {
-            id: uuidv4(),
-            postId: id,
-            content: content.trim(),
-            ownerId: ownerId,
-            timestamp: new Date().toISOString()
-        };
-        
-        db.comments.push(newComment);
-        await writeDB(db);
-        
-        res.status(201).json(newComment);
-    } catch (error) {
-        console.error('Add comment error:', error);
-        res.status(500).json({ error: 'Failed to add comment' });
-    }
-});
-
-// POST report content
-app.post('/api/posts/:id/report', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { reason } = req.body;
-        
-        const db = await readDB();
-        const reporterId = getVoterId(req);
-        
-        const post = db.posts.find(p => p.id === id);
-        if (!post) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-        
-        if (!db.reports || !Array.isArray(db.reports)) {
-            db.reports = [];
-        }
-        
-        const newReport = {
-            id: uuidv4(),
-            postId: id,
-            reportedBy: reporterId,
-            reason: reason || 'No reason provided',
-            timestamp: new Date().toISOString(),
-            status: 'pending'
-        };
-        
-        db.reports.push(newReport);
-        await writeDB(db);
-        
-        res.json({ success: true, message: 'Report submitted' });
-    } catch (error) {
-        console.error('Report error:', error);
-        res.status(500).json({ error: 'Failed to submit report' });
-    }
-});
-
 // POST vote
 app.post('/api/posts/:id/vote', async (req, res) => {
     try {
@@ -324,9 +375,12 @@ app.post('/api/posts/:id/vote', async (req, res) => {
         const db = await readDB();
         const voterId = getVoterId(req);
         
-        // Check if user is banned
         if (isBanned(db, voterId)) {
             return res.status(403).json({ error: 'Your account has been banned' });
+        }
+        
+        if (!db.posts || !Array.isArray(db.posts)) {
+            return res.status(404).json({ error: 'Post not found' });
         }
         
         const postIndex = db.posts.findIndex(p => p.id === id);
@@ -517,6 +571,91 @@ app.post('/api/upload', upload.array('files', 5), async (req, res) => {
     }
 });
 
+// POST comment
+app.post('/api/posts/:id/comments', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { content } = req.body;
+        
+        if (!content || content.trim().length === 0) {
+            return res.status(400).json({ error: 'Comment required' });
+        }
+        
+        const db = await readDB();
+        const ownerId = getVoterId(req);
+        
+        if (isBanned(db, ownerId)) {
+            return res.status(403).json({ error: 'Your account has been banned' });
+        }
+        
+        if (!db.posts || !Array.isArray(db.posts)) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+        
+        const post = db.posts.find(p => p.id === id);
+        if (!post) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+        
+        if (!db.comments || !Array.isArray(db.comments)) {
+            db.comments = [];
+        }
+        
+        const newComment = {
+            id: uuidv4(),
+            postId: id,
+            content: content.trim(),
+            ownerId: ownerId,
+            timestamp: new Date().toISOString()
+        };
+        
+        db.comments.push(newComment);
+        await writeDB(db);
+        
+        res.status(201).json(newComment);
+    } catch (error) {
+        console.error('Add comment error:', error);
+        res.status(500).json({ error: 'Failed to add comment' });
+    }
+});
+
+// POST report
+app.post('/api/posts/:id/report', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+        
+        const db = await readDB();
+        const reporterId = getVoterId(req);
+        
+        const post = db.posts.find(p => p.id === id);
+        if (!post) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+        
+        if (!db.reports || !Array.isArray(db.reports)) {
+            db.reports = [];
+        }
+        
+        const newReport = {
+            id: uuidv4(),
+            postId: id,
+            reportedBy: reporterId,
+            reason: reason || 'No reason provided',
+            timestamp: new Date().toISOString(),
+            status: 'pending'
+        };
+        
+        db.reports.push(newReport);
+        await writeDB(db);
+        
+        res.json({ success: true, message: 'Report submitted' });
+    } catch (error) {
+        console.error('Report error:', error);
+        res.status(500).json({ error: 'Failed to submit report' });
+    }
+});
+
 // DELETE post (owner only)
 app.delete('/api/posts/:id', async (req, res) => {
     try {
@@ -537,12 +676,11 @@ app.delete('/api/posts/:id', async (req, res) => {
             return res.status(403).json({ error: 'You can only delete your own posts' });
         }
         
-        // Delete uploaded files
         if (post.media && Array.isArray(post.media)) {
             for (const file of post.media) {
                 if (file.fileUrl) {
                     const filePath = path.join(UPLOAD_DIR, path.basename(file.fileUrl));
-                    try { await fsPromises.unlink(filePath); } catch (e) {}
+                    try { await fs.unlink(filePath); } catch (e) {}
                 }
             }
         }
@@ -560,193 +698,13 @@ app.delete('/api/posts/:id', async (req, res) => {
     }
 });
 
-// ============================================
-// ADMIN API ROUTES (Protected)
-// ============================================
-
-// Admin login
-app.post('/api/admin/login', (req, res) => {
-    const { password } = req.body;
-    if (password === ADMIN_PASSWORD) {
-        res.json({ success: true, token: ADMIN_PASSWORD });
-    } else {
-        res.status(401).json({ error: 'Invalid admin password' });
-    }
-});
-
-// GET all posts (admin view - includes banned)
-app.get('/api/admin/posts', requireAdmin, async (req, res) => {
-    try {
-        const db = await readDB();
-        if (!db.posts) db.posts = [];
-        res.json(db.posts);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to load posts' });
-    }
-});
-
-// GET all reports
-app.get('/api/admin/reports', requireAdmin, async (req, res) => {
-    try {
-        const db = await readDB();
-        if (!db.reports) db.reports = [];
-        const reportsWithDetails = db.reports.map(report => {
-            const post = db.posts.find(p => p.id === report.postId);
-            return { ...report, postContent: post?.content, postOwner: post?.ownerId };
-        });
-        res.json(reportsWithDetails);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to load reports' });
-    }
-});
-
-// GET all bans
-app.get('/api/admin/bans', requireAdmin, async (req, res) => {
-    try {
-        const db = await readDB();
-        res.json(db.bans || []);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to load bans' });
-    }
-});
-
-// BAN user
-app.post('/api/admin/ban', requireAdmin, async (req, res) => {
-    try {
-        const { userId, reason, duration } = req.body;
-        
-        if (!userId) {
-            return res.status(400).json({ error: 'User ID is required' });
-        }
-        
-        const db = await readDB();
-        if (!db.bans) db.bans = [];
-        
-        // Remove existing ban if any
-        db.bans = db.bans.filter(b => b.userId !== userId);
-        
-        const newBan = {
-            id: uuidv4(),
-            userId,
-            reason: reason || 'No reason provided',
-            bannedBy: 'admin',
-            timestamp: new Date().toISOString(),
-            expiresAt: duration ? new Date(Date.now() + duration).toISOString() : null
-        };
-        
-        db.bans.push(newBan);
-        await writeDB(db);
-        
-        console.log(`✅ User banned: ${userId}`);
-        res.json({ success: true, ban: newBan });
-    } catch (error) {
-        console.error('Ban error:', error);
-        res.status(500).json({ error: 'Failed to ban user' });
-    }
-});
-
-// UNBAN user
-app.delete('/api/admin/ban/:userId', requireAdmin, async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const db = await readDB();
-        
-        if (!db.bans) db.bans = [];
-        
-        db.bans = db.bans.filter(b => b.userId !== userId);
-        await writeDB(db);
-        
-        console.log(`✅ User unbanned: ${userId}`);
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Unban error:', error);
-        res.status(500).json({ error: 'Failed to unban user' });
-    }
-});
-
-// DELETE any post (admin)
-app.delete('/api/admin/posts/:id', requireAdmin, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const db = await readDB();
-        
-        const post = db.posts.find(p => p.id === id);
-        if (!post) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-        
-        // Delete uploaded files
-        if (post.media && Array.isArray(post.media)) {
-            for (const file of post.media) {
-                if (file.fileUrl) {
-                    const filePath = path.join(UPLOAD_DIR, path.basename(file.fileUrl));
-                    try { await fsPromises.unlink(filePath); } catch (e) {}
-                }
-            }
-        }
-        
-        db.posts = db.posts.filter(p => p.id !== id);
-        if (db.comments) db.comments = db.comments.filter(c => c.postId !== id);
-        if (db.votes) db.votes = db.votes.filter(v => v.postId !== id);
-        if (db.bookmarks) db.bookmarks = db.bookmarks.filter(b => b.postId !== id);
-        if (db.reports) db.reports = db.reports.filter(r => r.postId !== id);
-        
-        await writeDB(db);
-        console.log(`✅ Post deleted by admin: ${id}`);
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Admin delete error:', error);
-        res.status(500).json({ error: 'Failed to delete post' });
-    }
-});
-
-// UPDATE report status
-app.patch('/api/admin/reports/:id', requireAdmin, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status } = req.body;
-        
-        const db = await readDB();
-        if (!db.reports) db.reports = [];
-        
-        const reportIndex = db.reports.findIndex(r => r.id === id);
-        if (reportIndex === -1) {
-            return res.status(404).json({ error: 'Report not found' });
-        }
-        
-        db.reports[reportIndex].status = status;
-        db.reports[reportIndex].resolvedAt = new Date().toISOString();
-        
-        await writeDB(db);
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to update report' });
-    }
-});
-
-// ============================================
-// SERVE FRONTEND IN PRODUCTION
-// ============================================
-
-const distPath = path.join(__dirname, '../client/dist');
-if (fs.existsSync(distPath)) {
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-        res.sendFile(path.join(distPath, 'index.html'));
-    });
-    console.log('✅ Frontend will be served from client/dist');
-}
-
-// ============================================
-// START SERVER
-// ============================================
-
+// Start server
 app.listen(PORT, () => {
     console.log('🚀 ============================================');
     console.log(`🚀 Echo Server running on http://localhost:${PORT}`);
     console.log(`📁 Database: ${DB_FILE}`);
     console.log(`📁 Uploads: ${UPLOAD_DIR}`);
-    console.log(`🔐 Admin: Enabled (password: ${ADMIN_PASSWORD})`);
+    console.log(`🔐 Admin Password: ${ADMIN_PASSWORD}`);
     console.log('✨ Features: Admin Panel, Bans, Reports, Voting, Bookmarks, File Upload');
     console.log('🚀 ============================================');
 });

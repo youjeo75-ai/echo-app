@@ -1,19 +1,20 @@
+
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
-const fs = require('fs');
-const fsPromises = require('fs').promises;
+const fs = require('fs').promises;
 const path = require('path');
 const multer = require('multer');
+
+// 🔐 ADD THIS - Admin password
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'echo-admin-2024';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DB_FILE = path.join(__dirname, 'db.json');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 
-// Admin password (change this in production!)
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'echo-admin-2024';
-
+// ... rest of your existing code ...
 // Create uploads directory
 if (!fs.existsSync(UPLOAD_DIR)) {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });

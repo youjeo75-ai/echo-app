@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3001;
 const DB_FILE = path.join(__dirname, 'db.json');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 
-// 🔐 ADMIN PASSWORD (Change this!)
+// 🔐 ADMIN PASSWORD
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'echo-admin-2024';
 
 // Create uploads directory
@@ -112,18 +112,14 @@ const extractHashtags = (content) => {
     return [...new Set(matches.map(tag => tag.toLowerCase()))];
 };
 
-const isBanned = (db, voterId) => {
-    return db.bans.some(ban => ban.userId === voterId && (!ban.expiresAt || new Date(ban.expiresAt) > new Date()));
-};
-
 // ============================================
-// ADMIN ROUTES (Add these!)
+// 🔐 ADMIN ROUTES (ADD THESE!)
 // ============================================
 
 // Admin login
 app.post('/api/admin/login', (req, res) => {
     const { password } = req.body;
-    console.log('Admin login attempt:', password === ADMIN_PASSWORD ? 'SUCCESS' : 'FAILED');
+    console.log('🔐 Admin login attempt:', password === ADMIN_PASSWORD ? '✅ SUCCESS' : '❌ FAILED');
     if (password === ADMIN_PASSWORD) {
         res.json({ success: true, token: ADMIN_PASSWORD });
     } else {
@@ -285,27 +281,25 @@ app.get('/api/posts', async (req, res) => {
             return res.json([]);
         }
         
-        const posts = db.posts
-            .filter(post => !isBanned(db, post.ownerId))
-            .map(post => {
-                const userVote = db.votes.find(v => v.postId === post.id && v.voterId === voterId);
-                const postComments = db.comments.filter(c => c.postId === post.id && !isBanned(db, c.ownerId));
-                const postVotes = db.votes.filter(v => v.postId === post.id);
-                const isBookmarked = db.bookmarks.some(b => b.postId === post.id && b.userId === voterId);
-                
-                return {
-                    ...post,
-                    comments: postComments || [],
-                    commentCount: postComments ? postComments.length : 0,
-                    upvotes: postVotes.filter(v => v.type === 'up').length,
-                    downvotes: postVotes.filter(v => v.type === 'down').length,
-                    netVotes: postVotes.filter(v => v.type === 'up').length - postVotes.filter(v => v.type === 'down').length,
-                    userVote: userVote ? userVote.type : null,
-                    isOwner: post.ownerId === voterId,
-                    isBookmarked: isBookmarked || false,
-                    hashtags: extractHashtags(post.content)
-                };
-            });
+        const posts = db.posts.map(post => {
+            const userVote = db.votes.find(v => v.postId === post.id && v.voterId === voterId);
+            const postComments = db.comments.filter(c => c.postId === post.id);
+            const postVotes = db.votes.filter(v => v.postId === post.id);
+            const isBookmarked = db.bookmarks.some(b => b.postId === post.id && b.userId === voterId);
+            
+            return {
+                ...post,
+                comments: postComments || [],
+                commentCount: postComments ? postComments.length : 0,
+                upvotes: postVotes.filter(v => v.type === 'up').length,
+                downvotes: postVotes.filter(v => v.type === 'down').length,
+                netVotes: postVotes.filter(v => v.type === 'up').length - postVotes.filter(v => v.type === 'down').length,
+                userVote: userVote ? userVote.type : null,
+                isOwner: post.ownerId === voterId,
+                isBookmarked: isBookmarked || false,
+                hashtags: extractHashtags(post.content)
+            };
+        });
         
         posts.sort((a, b) => b.netVotes - a.netVotes);
         res.json(posts);
@@ -326,10 +320,6 @@ app.post('/api/posts', async (req, res) => {
         
         const db = await readDB();
         const ownerId = getVoterId(req);
-        
-        if (isBanned(db, ownerId)) {
-            return res.status(403).json({ error: 'Your account has been banned' });
-        }
         
         const newPost = {
             id: uuidv4(),
@@ -374,10 +364,6 @@ app.post('/api/posts/:id/vote', async (req, res) => {
         
         const db = await readDB();
         const voterId = getVoterId(req);
-        
-        if (isBanned(db, voterId)) {
-            return res.status(403).json({ error: 'Your account has been banned' });
-        }
         
         if (!db.posts || !Array.isArray(db.posts)) {
             return res.status(404).json({ error: 'Post not found' });
@@ -437,10 +423,6 @@ app.post('/api/posts/:id/bookmark', async (req, res) => {
         const db = await readDB();
         const userId = getVoterId(req);
         
-        if (isBanned(db, userId)) {
-            return res.status(403).json({ error: 'Your account has been banned' });
-        }
-        
         if (!db.bookmarks || !Array.isArray(db.bookmarks)) {
             db.bookmarks = [];
         }
@@ -471,7 +453,7 @@ app.get('/api/trending/hashtags', async (req, res) => {
             return res.json([]);
         }
         
-        db.posts.filter(p => !isBanned(db, p.ownerId)).forEach(post => {
+        db.posts.forEach(post => {
             extractHashtags(post.content).forEach(tag => {
                 hashtagCount[tag] = (hashtagCount[tag] || 0) + 1;
             });
@@ -496,7 +478,7 @@ app.get('/api/trending', async (req, res) => {
         }
         
         const trending = db.posts
-            .filter(p => new Date(p.timestamp) > yesterday && !isBanned(db, p.ownerId))
+            .filter(p => new Date(p.timestamp) > yesterday)
             .map(post => {
                 const postVotes = db.votes.filter(v => v.postId === post.id);
                 return { ...post, netVotes: postVotes.filter(v => v.type === 'up').length - postVotes.filter(v => v.type === 'down').length };
@@ -515,10 +497,6 @@ app.get('/api/stats', async (req, res) => {
     try {
         const db = await readDB();
         const voterId = getVoterId(req);
-        
-        if (isBanned(db, voterId)) {
-            return res.status(403).json({ error: 'Your account has been banned' });
-        }
         
         if (!db.posts) db.posts = [];
         if (!db.votes) db.votes = [];
@@ -550,13 +528,6 @@ app.post('/api/upload', upload.array('files', 5), async (req, res) => {
             return res.status(400).json({ error: 'No files uploaded' });
         }
         
-        const db = await readDB();
-        const voterId = getVoterId(req);
-        
-        if (isBanned(db, voterId)) {
-            return res.status(403).json({ error: 'Your account has been banned' });
-        }
-        
         const files = req.files.map(file => ({
             fileUrl: `${req.protocol}://${req.get('host')}/uploads/${file.filename}`,
             fileName: file.originalname,
@@ -583,10 +554,6 @@ app.post('/api/posts/:id/comments', async (req, res) => {
         
         const db = await readDB();
         const ownerId = getVoterId(req);
-        
-        if (isBanned(db, ownerId)) {
-            return res.status(403).json({ error: 'Your account has been banned' });
-        }
         
         if (!db.posts || !Array.isArray(db.posts)) {
             return res.status(404).json({ error: 'Post not found' });
@@ -662,10 +629,6 @@ app.delete('/api/posts/:id', async (req, res) => {
         const { id } = req.params;
         const db = await readDB();
         const voterId = getVoterId(req);
-        
-        if (isBanned(db, voterId)) {
-            return res.status(403).json({ error: 'Your account has been banned' });
-        }
         
         const post = db.posts.find(p => p.id === id);
         if (!post) {

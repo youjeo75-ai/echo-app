@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3001;
 const DB_FILE = path.join(__dirname, 'db.json');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 
-// 🔐 ADMIN PASSWORD
+// 🔐 ADMIN PASSWORD (Change this!)
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'echo-admin-2024';
 
 // Create uploads directory

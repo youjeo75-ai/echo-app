@@ -76,6 +76,7 @@ function App() {
   const [banReason, setBanReason] = useState('');
   const [banDuration, setBanDuration] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -107,12 +108,17 @@ function App() {
     }
   };
 
+  // ✅ FIXED: Admin login sends password to backend for verification
   const handleAdminLogin = async () => {
     try {
-      const response = await axios.post(`${API_URL}/api/admin/login`, { password: adminPassword });
+      const response = await axios.post(`${API_URL}/api/admin/login`, { 
+        password: adminPassword 
+      });
+      
       if (response.data.success) {
         setIsAdmin(true);
         setShowAdminPanel(true);
+        setAdminToken(response.data.token); // Store token for API calls
         loadAdminData();
         toast.success('Admin access granted! 🔐');
         setAdminPassword('');
@@ -124,10 +130,11 @@ function App() {
 
   const loadAdminData = async () => {
     try {
+      const headers = { Authorization: `Bearer ${adminToken}` };
       const [postsRes, reportsRes, bansRes] = await Promise.all([
-        axios.get(`${API_URL}/api/admin/posts`, { headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` } }),
-        axios.get(`${API_URL}/api/admin/reports`, { headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` } }),
-        axios.get(`${API_URL}/api/admin/bans`, { headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` } })
+        axios.get(`${API_URL}/api/admin/posts`, { headers }),
+        axios.get(`${API_URL}/api/admin/reports`, { headers }),
+        axios.get(`${API_URL}/api/admin/bans`, { headers })
       ]);
       setAdminPosts(postsRes.data);
       setAdminReports(reportsRes.data);
@@ -276,12 +283,12 @@ function App() {
     toast.success('Copied to clipboard!');
   };
 
-  // Admin functions
+  // ✅ FIXED: Admin functions use adminToken instead of ADMIN_PASSWORD
   const handleAdminDelete = async (id: string) => {
     if (!confirm('Delete this post as admin?')) return;
     try {
       await axios.delete(`${API_URL}/api/admin/posts/${id}`, {
-        headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` }
+        headers: { Authorization: `Bearer ${adminToken}` }
       });
       toast.success('Post deleted by admin');
       loadAdminData();
@@ -303,7 +310,7 @@ function App() {
         reason: banReason,
         duration: durationMs
       }, {
-        headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` }
+        headers: { Authorization: `Bearer ${adminToken}` }
       });
       toast.success(`User ${banUserId} banned!`);
       setBanUserId('');
@@ -318,7 +325,7 @@ function App() {
   const handleUnbanUser = async (userId: string) => {
     try {
       await axios.delete(`${API_URL}/api/admin/ban/${userId}`, {
-        headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` }
+        headers: { Authorization: `Bearer ${adminToken}` }
       });
       toast.success('User unbanned');
       loadAdminData();
@@ -330,7 +337,7 @@ function App() {
   const handleResolveReport = async (reportId: string, status: 'resolved' | 'dismissed') => {
     try {
       await axios.patch(`${API_URL}/api/admin/reports/${reportId}`, { status }, {
-        headers: { Authorization: `Bearer ${ADMIN_PASSWORD}` }
+        headers: { Authorization: `Bearer ${adminToken}` }
       });
       toast.success(`Report ${status}`);
       loadAdminData();
@@ -385,7 +392,7 @@ function App() {
             )}
             {/* Admin Toggle */}
             {isAdmin ? (
-              <button onClick={() => { setIsAdmin(false); setShowAdminPanel(false); }} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Exit admin">
+              <button onClick={() => { setIsAdmin(false); setShowAdminPanel(false); setAdminToken(null); }} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Exit admin">
                 <LogOut className="w-5 h-5" />
               </button>
             ) : (
